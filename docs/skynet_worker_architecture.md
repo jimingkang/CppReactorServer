@@ -97,25 +97,26 @@ fd event -> SocketMessage -> SkynetMessage -> Gate queue -> global queue -> work
 
 ## Adding Games
 
-Server-side game logic is split behind `IGameService`:
+Server-side game logic now has two layers:
 
 ```text
-IGameService
+GameWorld
   -> PlatformGameWorld
-  -> TicTacToeWorld
-  -> FuturePokerWorld
-  -> FutureMahjongWorld
+     -> supermario::SuperMarioGameWorld
+  -> BoardGameWorld
+     -> Game2048
+     -> FuturePokerWorld
+     -> FutureMahjongWorld
 ```
 
-`GameWorld` is now a router/facade. It owns concrete game services, forwards
-`join`/`leave` to every game service, and routes command lines by command name.
 To add a new game:
 
 ```text
-1. Implement IGameService.
-2. Add the instance to GameWorld::games_.
-3. Make canHandle(command) return true for that game's protocol commands.
-4. Add a client view that parses the new server lines and renders controls.
+1. Inherit from GameWorld for a complete standalone game.
+2. Store player/world state in that concrete class.
+3. Implement join/leave/handleCommand/snapshot.
+4. Add a server target or wire that concrete world into the worker server.
+5. Add a client view that parses the new server lines and renders controls.
 ```
 
 Client-side views follow the same shape:
@@ -142,7 +143,7 @@ cmake --build cmake-build-debug --target stress_client
 Start the worker server:
 
 ```bash
-./cmake-build-debug/game_server_workers 127.0.0.1 7779 4
+./cmake-build-debug/supermario_server_workers 127.0.0.1 7779 4
 ```
 
 Run the default million-request test:

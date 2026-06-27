@@ -1,9 +1,11 @@
 #include "reactor.h"
 #include "server.h"
+#include "supermario/super_mario_game_world.h"
 
 #include <cstdlib>
 #include <exception>
 #include <iostream>
+#include <memory>
 #include <string>
 
 int main(int argc, char** argv) {
@@ -12,7 +14,7 @@ int main(int argc, char** argv) {
 
     try {
         Reactor reactor;
-        GameServer server(reactor, host, port);
+        Server server(reactor, host, port, std::make_unique<supermario::SuperMarioGameWorld>());
         server.start();
         reactor.run();
     } catch (const std::exception& ex) {

@@ -315,7 +315,9 @@ private:
             if (std::none_of(monsters_.begin(), monsters_.end(), [&](const Monster& existing) { return existing.id == monster.id; })) {
                 monsters_.push_back(monster);
             }
+            return;
         }
+
     }
 
     int socketFd_ = -1;

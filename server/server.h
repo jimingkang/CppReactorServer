@@ -4,15 +4,16 @@
 #include "reactor.h"
 #include "task.h"
 
+#include <memory>
 #include <string>
 
-class GameServer {
+class Server {
 public:
-    GameServer(Reactor& reactor, std::string host, int port);
-    ~GameServer();
+    Server(Reactor& reactor, std::string host, int port, std::unique_ptr<GameWorld> world);
+    ~Server();
 
-    GameServer(const GameServer&) = delete;
-    GameServer& operator=(const GameServer&) = delete;
+    Server(const Server&) = delete;
+    Server& operator=(const Server&) = delete;
 
     void start();
 
@@ -21,7 +22,7 @@ private:
     Task clientSession(int clientFd);
 
     Reactor& reactor_;
-    GameWorld world_;
+    std::unique_ptr<GameWorld> world_;
     std::string host_;
     int port_ = 0;
     int listenFd_ = -1;

@@ -36,22 +36,25 @@ std::string ensureNewline(std::string data) {
 
 } // namespace
 
-GameServer::GameServer(Reactor& reactor, std::string host, int port)
-    : reactor_(reactor), host_(std::move(host)), port_(port) {}
+Server::Server(Reactor& reactor, std::string host, int port, std::unique_ptr<GameWorld> world)
+    : reactor_(reactor), world_(std::move(world)), host_(std::move(host)), port_(port) {}
 
-GameServer::~GameServer() {
+Server::~Server() {
     if (listenFd_ >= 0) {
         close(listenFd_);
     }
 }
 
-void GameServer::start() {
+void Server::start() {
+    if (!world_) {
+        throw std::runtime_error("server requires a GameWorld");
+    }
     listenFd_ = createListenSocket(host_, port_);
-    std::cout << "game_server listening on " << host_ << ':' << port_ << '\n';
+    std::cout << "server listening on " << host_ << ':' << port_ << '\n';
     acceptLoop();
 }
 
-Task GameServer::acceptLoop() {
+Task Server::acceptLoop() {
     while (true) {
         sockaddr_in clientAddr{};
         socklen_t len = sizeof(clientAddr);
@@ -83,8 +86,8 @@ Task GameServer::acceptLoop() {
     }
 }
 
-Task GameServer::clientSession(int clientFd) {
-    const int playerId = world_.join();
+Task Server::clientSession(int clientFd) {
+    const int playerId = world_->join();
     std::string output = ensureNewline("WELCOME player=" + std::to_string(playerId) + " type HELP");
     size_t outputOffset = 0;
 
@@ -105,7 +108,7 @@ Task GameServer::clientSession(int clientFd) {
             if (n < 0 && errno == EINTR) {
                 continue;
             }
-            world_.leave(playerId);
+            world_->leave(playerId);
             close(clientFd);
             co_return;
         }
@@ -123,9 +126,9 @@ Task GameServer::clientSession(int clientFd) {
                     continue;
                 }
 
-                std::string response = world_.handleCommand(playerId, line);
+                std::string response = world_->handleCommand(playerId, line);
                 if (response == "QUIT\n") {
-                    output += ensureNewline(world_.leave(playerId));
+                    output += ensureNewline(world_->leave(playerId));
                     while (outputOffset < output.size()) {
                         const ssize_t written = send(clientFd, output.data() + outputOffset, output.size() - outputOffset, kSendFlags);
                         if (written > 0) {
@@ -147,7 +150,7 @@ Task GameServer::clientSession(int clientFd) {
         }
 
         if (n == 0) {
-            world_.leave(playerId);
+            world_->leave(playerId);
             close(clientFd);
             co_return;
         }
@@ -160,7 +163,7 @@ Task GameServer::clientSession(int clientFd) {
             continue;
         }
 
-        world_.leave(playerId);
+        world_->leave(playerId);
         close(clientFd);
         co_return;
     }

@@ -55,9 +55,13 @@ if (BUILD_IMGUI_CLIENT)
     add_executable(super_mario_client client/super_mario_client.cpp)
     target_link_libraries(super_mario_client PRIVATE imgui glfw OpenGL::GL)
 
+    add_executable(game2048_client client/2048/2048_client.cpp)
+    target_link_libraries(game2048_client PRIVATE imgui glfw OpenGL::GL)
+
     if (APPLE)
         #target_compile_definitions(cppImgui PRIVATE GL_SILENCE_DEPRECATION)
         target_compile_definitions(super_mario_client PRIVATE GL_SILENCE_DEPRECATION)
+        target_compile_definitions(game2048_client PRIVATE GL_SILENCE_DEPRECATION)
     endif ()
 endif ()
 
@@ -65,43 +69,8 @@ add_executable(stress_client client/stress_client.cpp)
 target_compile_features(stress_client PRIVATE cxx_std_20)
 
 if (BUILD_GAME_SERVER AND (CMAKE_SYSTEM_NAME STREQUAL "Linux" OR APPLE))
-    add_executable(game_server
-            server/main.cpp
-            server/reactor.cpp
-            server/socket_utils.cpp
-            server/game_world.cpp
-            server/server.cpp
-    )
-    target_compile_features(game_server PRIVATE cxx_std_20)
-    target_include_directories(game_server PRIVATE server)
-    if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
-        target_compile_definitions(game_server PRIVATE _GNU_SOURCE)
-    endif ()
-
-    add_executable(game_server_coro
-            server/coro_main.cpp
-            server/coro_reactor.cpp
-            server/socket_utils.cpp
-            server/game_world.cpp
-            server/coro_server.cpp
-    )
-    target_compile_features(game_server_coro PRIVATE cxx_std_20)
-    target_include_directories(game_server_coro PRIVATE server)
-    if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
-        target_compile_definitions(game_server_coro PRIVATE _GNU_SOURCE)
-    endif ()
-
-    add_executable(game_server_workers
-            server/worker_main.cpp
-            server/worker_server.cpp
-            server/socket_utils.cpp
-            server/game_world.cpp
-    )
-    target_compile_features(game_server_workers PRIVATE cxx_std_20)
-    target_include_directories(game_server_workers PRIVATE server)
-    if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
-        target_compile_definitions(game_server_workers PRIVATE _GNU_SOURCE)
-    endif ()
+    add_subdirectory(server/supermario)
+    add_subdirectory(server/2048)
 else ()
-    message(STATUS "Skipping game_server: reactor backend requires Linux epoll or macOS/BSD kqueue.")
+    message(STATUS "Skipping supermario_server: reactor backend requires Linux epoll or macOS/BSD kqueue.")
 endif ()

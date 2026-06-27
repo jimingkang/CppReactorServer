@@ -1,6 +1,6 @@
 #pragma once
 
-#include "game_world.h"
+#include "supermario/super_mario_game_world.h"
 
 #include <atomic>
 #include <condition_variable>
@@ -205,6 +205,6 @@ private:
     std::queue<SocketCommand> socketCommands_;
     std::unordered_map<int, ClientSocket> sockets_;
 
-    GameWorld world_;
+    supermario::SuperMarioGameWorld world_;
     std::unordered_map<int, ClientSession> sessions_;
 };

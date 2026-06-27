@@ -2,7 +2,7 @@
 
 #include "coro_reactor.h"
 #include "coro_task.h"
-#include "game_world.h"
+#include "supermario/super_mario_game_world.h"
 
 #include <string>
 
@@ -22,7 +22,7 @@ private:
     DetachedTask writeAll(int fd, std::string data);
 
     CoroReactor& reactor_;
-    GameWorld world_;
+    supermario::SuperMarioGameWorld world_;
     std::string host_;
     int port_ = 0;
     int listenFd_ = -1;
