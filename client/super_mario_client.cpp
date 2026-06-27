@@ -330,6 +330,7 @@ private:
     std::unordered_map<int, RemotePlayer> players_;
     std::vector<Coin> coins_;
     std::vector<Monster> monsters_;
+    int inputSeq_ = 1;
 };
 
 class IGameClientView {
@@ -373,8 +374,11 @@ public:
         sendTimer_ += dt;
         stateTimer_ += dt;
         if (network.connected() && sendTimer_ >= 0.12f) {
-            network.sendLine("POS " + std::to_string(static_cast<int>(position_.x)) + " " +
-                             std::to_string(static_cast<int>(position_.y)));
+            // Send lightweight input event: sequence vx vy (pixels/sec)
+            const int vx = static_cast<int>(velocity_.x);
+            const int vy = static_cast<int>(velocity_.y);
+            network.sendLine("INPUT " + std::to_string(inputSeq_) + " " + std::to_string(vx) + " " + std::to_string(vy));
+            ++inputSeq_;
             queuedJump_ = false;
             sendTimer_ = 0.0f;
         }

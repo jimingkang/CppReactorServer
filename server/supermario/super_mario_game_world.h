@@ -55,9 +55,9 @@ private:
         {3, 2100, 402, 2040, 2200, -80},
     };
 
-    // Minimal server-side ECS for monsters (POC). Keeps original monsters_ for reference but
-    // migrates to ecs_ on first snapshot/update. Changes confined to server/supermario.
-    EnemyECS ecs_;
+    // Minimal server-side ECS for monsters & players (POC).
+    GameECS ecs_;
+
 
     std::unordered_map<int, Player> savedPlayers_;
 };

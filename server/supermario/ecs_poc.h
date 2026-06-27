@@ -2,12 +2,23 @@
 
 #include "super_mario_types.h"
 #include <vector>
+#include <unordered_map>
 
 namespace supermario {
 
 struct Position {
     int x = 0;
     int y = 0;
+};
+
+struct Velocity {
+    int vx = 0;  // pixels/sec
+    int vy = 0;
+};
+
+struct Health {
+    int hp = 100;
+    int score = 0;
 };
 
 struct Patrol {
@@ -18,24 +29,44 @@ struct Patrol {
     int id = 0;
 };
 
-// Minimal, header-only-friendly ECS for enemy patrol POC
-class EnemyECS {
+// Unified ECS for players and monsters
+class GameECS {
 public:
-    EnemyECS() = default;
+    GameECS() = default;
 
-    void initFrom(const std::vector<WorldMonster>& monsters);
-    void update(int ticks = 1);
+    // Monster API (unchanged from old EnemyECS)
+    void initMonstersFrom(const std::vector<WorldMonster>& monsters);
+    void updateMonsters(int ticks = 1);
     std::vector<WorldMonster> snapshotMonsters() const;
+    bool monstersEmpty() const { return monsterEntities_.empty(); }
 
-    bool empty() const { return entities_.empty(); }
+    // Player API
+    int createPlayer(int playerId);
+    void destroyPlayer(int playerId);
+    bool hasPlayer(int playerId) const { return playerEntities_.count(playerId) > 0; }
+    Player* getPlayer(int playerId);
+    const Player* getPlayer(int playerId) const;
+    std::vector<Player> snapshotPlayers() const;
+
+    // Unified physics & collision update per tick
+    void updatePhysics(int ms);
+    void checkCollisions(std::vector<WorldCoin>& coins);
 
 private:
-    struct Entity {
+    struct MonsterEntity {
         Position pos;
         Patrol patrol;
     };
 
-    std::vector<Entity> entities_;
+    struct PlayerEntity {
+        Position pos;
+        Velocity vel;
+        Health health;
+        int id = 0;
+    };
+
+    std::vector<MonsterEntity> monsterEntities_;
+    std::unordered_map<int, PlayerEntity> playerEntities_;
 };
 
 } // namespace supermario
