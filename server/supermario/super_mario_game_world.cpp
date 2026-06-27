@@ -116,6 +116,19 @@ std::string SuperMarioGameWorld::handleCommand(int playerId, const std::string& 
 }
 
 std::string SuperMarioGameWorld::snapshot() const {
+    // Note: const_cast used to allow lazy ECS init/update in this POC. In a full migration
+    // the world would own a non-const update loop and snapshots would not mutate state.
+    auto* self = const_cast<SuperMarioGameWorld*>(this);
+
+    // Initialize ECS from legacy monsters on first use.
+    if (self->ecs_.empty()) {
+        self->ecs_.initFrom(self->monsters_);
+    }
+
+    // For POC the authoritative update moved to world.tick(). Here snapshot is read-only
+    // and will not advance simulation; just export current ECS monster state.
+    const auto curMonsters = self->ecs_.snapshotMonsters();
+
     std::ostringstream out;
     out << "STATE players=" << players_.size() << "\n";
     for (const auto& [id, player] : players_) {
@@ -132,8 +145,8 @@ std::string SuperMarioGameWorld::snapshot() const {
         out << "COIN id=" << coin.id << " x=" << coin.x << " y=" << coin.y
             << " collected=" << (coin.collected ? 1 : 0) << "\n";
     }
-    out << "MONSTERS count=" << monsters_.size() << "\n";
-    for (const WorldMonster& monster : monsters_) {
+    out << "MONSTERS count=" << curMonsters.size() << "\n";
+    for (const WorldMonster& monster : curMonsters) {
         out << "MONSTER id=" << monster.id << " x=" << monster.x << " y=" << monster.y
             << " min=" << monster.minX << " max=" << monster.maxX << " speed=" << monster.speed << "\n";
     }
@@ -147,6 +160,16 @@ std::string SuperMarioGameWorld::commandName(const std::string& commandLine) {
 Player* SuperMarioGameWorld::find(int playerId) {
     auto it = players_.find(playerId);
     return it == players_.end() ? nullptr : &it->second;
+}
+
+void SuperMarioGameWorld::tick(int ms) {
+    // Initialize ECS if needed.
+    if (ecs_.empty()) {
+        ecs_.initFrom(monsters_);
+    }
+    // For POC define server tick unit as 100ms -> one ECS tick per 100ms.
+    const int ticks = std::max(1, ms / 100);
+    ecs_.update(ticks);
 }
 
 } // namespace supermario

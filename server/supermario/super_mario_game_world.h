@@ -2,6 +2,7 @@
 
 #include "../platform_game_world.h"
 #include "super_mario_types.h"
+#include "ecs_poc.h"
 
 #include <string>
 #include <unordered_map>
@@ -15,6 +16,9 @@ public:
     std::string leave(int playerId) override;
     std::string handleCommand(int playerId, const std::string& commandLine) override;
     std::string snapshot() const override;
+
+    // Advance authoritative simulation by ms milliseconds (called from server tick thread).
+    void tick(int ms) override;
 
 private:
     static std::string commandName(const std::string& commandLine);
@@ -33,6 +37,11 @@ private:
         {2, 1740, 327, 1730, 1840, 55},
         {3, 2100, 402, 2040, 2200, -80},
     };
+
+    // Minimal server-side ECS for monsters (POC). Keeps original monsters_ for reference but
+    // migrates to ecs_ on first snapshot/update. Changes confined to server/supermario.
+    EnemyECS ecs_;
+
     std::unordered_map<int, Player> savedPlayers_;
 };
 

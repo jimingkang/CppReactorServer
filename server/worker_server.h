@@ -200,6 +200,7 @@ private:
     std::queue<ServiceQueue*> globalQueue_;
     bool servicesStopped_ = false;
     std::vector<std::thread> workers_;
+    std::thread tickThread_;
 
     std::mutex commandMutex_;
     std::queue<SocketCommand> socketCommands_;

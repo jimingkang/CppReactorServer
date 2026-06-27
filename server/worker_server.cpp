@@ -144,6 +144,24 @@ void WorkerGameServer::run() {
         workers_.emplace_back([this, i] { workerLoop(i); });
     }
 
+    // Start fixed-step tick thread for authoritative simulation (100ms per tick).
+    tickThread_ = std::thread([this] {
+        using namespace std::chrono_literals;
+        const std::chrono::milliseconds interval(100);
+        while (running_.load()) {
+            const auto start = std::chrono::steady_clock::now();
+            try {
+                world_.tick(static_cast<int>(interval.count()));
+            } catch (const std::exception& ex) {
+                std::cerr << "world.tick error: " << ex.what() << '\n';
+            }
+            const auto elapsed = std::chrono::steady_clock::now() - start;
+            if (elapsed < interval) {
+                std::this_thread::sleep_for(interval - elapsed);
+            }
+        }
+    });
+
     std::cout << "worker_game_server listening on " << host_ << ':' << port_
               << " workers=" << workerCount_ << " services=logger,gate,connection,gameworld,room,db\n";
     socketLoop();
@@ -167,6 +185,10 @@ void WorkerGameServer::stop() {
         }
     }
     workers_.clear();
+
+    if (tickThread_.joinable()) {
+        tickThread_.join();
+    }
 
     for (auto& [fd, _] : sockets_) {
         close(fd);
