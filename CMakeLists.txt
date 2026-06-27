@@ -61,6 +61,9 @@ if (BUILD_IMGUI_CLIENT)
     endif ()
 endif ()
 
+add_executable(stress_client client/stress_client.cpp)
+target_compile_features(stress_client PRIVATE cxx_std_20)
+
 if (BUILD_GAME_SERVER AND (CMAKE_SYSTEM_NAME STREQUAL "Linux" OR APPLE))
     add_executable(game_server
             server/main.cpp
@@ -86,6 +89,18 @@ if (BUILD_GAME_SERVER AND (CMAKE_SYSTEM_NAME STREQUAL "Linux" OR APPLE))
     target_include_directories(game_server_coro PRIVATE server)
     if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
         target_compile_definitions(game_server_coro PRIVATE _GNU_SOURCE)
+    endif ()
+
+    add_executable(game_server_workers
+            server/worker_main.cpp
+            server/worker_server.cpp
+            server/socket_utils.cpp
+            server/game_world.cpp
+    )
+    target_compile_features(game_server_workers PRIVATE cxx_std_20)
+    target_include_directories(game_server_workers PRIVATE server)
+    if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        target_compile_definitions(game_server_workers PRIVATE _GNU_SOURCE)
     endif ()
 else ()
     message(STATUS "Skipping game_server: reactor backend requires Linux epoll or macOS/BSD kqueue.")

@@ -11,7 +11,6 @@
 #include <unistd.h>
 
 #include <algorithm>
-#include <array>
 #include <cerrno>
 #include <cmath>
 #include <cstdio>
@@ -42,6 +41,23 @@ struct RemotePlayer {
     int y = 0;
     int hp = 100;
     int score = 0;
+};
+
+struct Coin {
+    int id = 0;
+    float x = 0.0f;
+    float y = 0.0f;
+    bool collected = false;
+};
+
+struct Monster {
+    int id = 0;
+    float x = 0.0f;
+    float y = 0.0f;
+    float minX = 0.0f;
+    float maxX = 0.0f;
+    float speed = 0.0f;
+    bool alive = true;
 };
 
 int setNonBlocking(int fd) {
@@ -104,6 +120,8 @@ public:
         inbox_.clear();
         partial_.clear();
         players_.clear();
+        coins_.clear();
+        monsters_.clear();
     }
 
     bool connected() const {
@@ -124,6 +142,14 @@ public:
 
     const std::unordered_map<int, RemotePlayer>& players() const {
         return players_;
+    }
+
+    const std::vector<Coin>& coins() const {
+        return coins_;
+    }
+
+    const std::vector<Monster>& monsters() const {
+        return monsters_;
     }
 
     void sendLine(const std::string& line) {
@@ -234,6 +260,61 @@ private:
             if (player.id > 0) {
                 players_[player.id] = player;
             }
+            return;
+        }
+
+        if (line.rfind("COIN ", 0) == 0) {
+            Coin coin;
+            std::istringstream input(line);
+            std::string token;
+            input >> token;
+            while (input >> token) {
+                const size_t eq = token.find('=');
+                if (eq == std::string::npos) {
+                    continue;
+                }
+                const std::string key = token.substr(0, eq);
+                const int value = std::atoi(token.c_str() + eq + 1);
+                if (key == "id") coin.id = value;
+                if (key == "x") coin.x = static_cast<float>(value);
+                if (key == "y") coin.y = static_cast<float>(value);
+                if (key == "collected") coin.collected = value != 0;
+            }
+            auto existing = std::find_if(coins_.begin(), coins_.end(), [&](const Coin& current) {
+                return current.id == coin.id;
+            });
+            if (existing == coins_.end()) {
+                coins_.push_back(coin);
+            } else {
+                existing->x = coin.x;
+                existing->y = coin.y;
+                existing->collected = existing->collected || coin.collected;
+            }
+            return;
+        }
+
+        if (line.rfind("MONSTER ", 0) == 0) {
+            Monster monster;
+            std::istringstream input(line);
+            std::string token;
+            input >> token;
+            while (input >> token) {
+                const size_t eq = token.find('=');
+                if (eq == std::string::npos) {
+                    continue;
+                }
+                const std::string key = token.substr(0, eq);
+                const int value = std::atoi(token.c_str() + eq + 1);
+                if (key == "id") monster.id = value;
+                if (key == "x") monster.x = static_cast<float>(value);
+                if (key == "y") monster.y = static_cast<float>(value);
+                if (key == "min") monster.minX = static_cast<float>(value);
+                if (key == "max") monster.maxX = static_cast<float>(value);
+                if (key == "speed") monster.speed = static_cast<float>(value);
+            }
+            if (std::none_of(monsters_.begin(), monsters_.end(), [&](const Monster& existing) { return existing.id == monster.id; })) {
+                monsters_.push_back(monster);
+            }
         }
     }
 
@@ -245,15 +326,25 @@ private:
     std::string outbox_;
     std::vector<std::string> inbox_;
     std::unordered_map<int, RemotePlayer> players_;
+    std::vector<Coin> coins_;
+    std::vector<Monster> monsters_;
 };
 
-class SuperMarioNetGame {
+class IGameClientView {
 public:
-    void update(GLFWwindow* window, float dt, NetworkClient& network) {
+    virtual ~IGameClientView() = default;
+    virtual void update(GLFWwindow* window, float dt, NetworkClient& network) = 0;
+    virtual void draw(ImDrawList* draw, const ImVec2& origin, const ImVec2& size, NetworkClient& network) = 0;
+};
+
+class SuperMarioNetGame final : public IGameClientView {
+public:
+    void update(GLFWwindow* window, float dt, NetworkClient& network) override {
         dt = std::min(dt, 1.0f / 30.0f);
         const bool left = key(window, GLFW_KEY_A) || key(window, GLFW_KEY_LEFT);
         const bool right = key(window, GLFW_KEY_D) || key(window, GLFW_KEY_RIGHT);
         const bool jump = key(window, GLFW_KEY_SPACE) || key(window, GLFW_KEY_W) || key(window, GLFW_KEY_UP);
+        syncWorldObjects(network);
 
         velocity_.x = 0.0f;
         if (left) {
@@ -272,6 +363,10 @@ public:
         position_.x = std::clamp(position_.x + velocity_.x * dt, 0.0f, 2360.0f);
         position_.y += velocity_.y * dt;
         collideVertical();
+        updateMonsters(dt);
+        checkCoinCollisions(network);
+        checkMonsterCollisions(network);
+        invulnerableTimer_ = std::max(0.0f, invulnerableTimer_ - dt);
 
         sendTimer_ += dt;
         stateTimer_ += dt;
@@ -287,22 +382,48 @@ public:
         }
     }
 
-    void draw(ImDrawList* draw, const ImVec2& origin, const ImVec2& size, const NetworkClient& network) {
+    void draw(ImDrawList* draw, const ImVec2& origin, const ImVec2& size, NetworkClient& network) override {
         cameraX_ = std::clamp(position_.x - size.x * 0.35f, 0.0f, 2400.0f - size.x);
         drawSky(draw, origin, size);
         drawScenery(draw, origin, size);
         for (const Platform& platform : platforms_) {
             drawPlatform(draw, origin, platform);
         }
+        drawCoins(draw, origin);
+        drawMonsters(draw, origin);
         drawFlag(draw, origin);
         drawRemotePlayers(draw, origin, network);
-        drawMario(draw, origin, position_, IM_COL32(232, 54, 48, 255));
+        drawMario(draw, origin, position_, invulnerableTimer_ > 0.0f ? IM_COL32(255, 166, 56, 255) : IM_COL32(232, 54, 48, 255));
         drawHud(draw, origin, size, network);
+    }
+
+    int hp() const {
+        return hp_;
+    }
+
+    bool gameOver() const {
+        return gameOver_;
+    }
+
+    int localScore() const {
+        return localScore_;
+    }
+
+    int collectedCoins() const {
+        return collectedCoins_;
+    }
+
+    int totalCoins() const {
+        return static_cast<int>(coins_.size());
     }
 
 private:
     static bool key(GLFWwindow* window, int code) {
         return glfwGetKey(window, code) == GLFW_PRESS;
+    }
+
+    static bool rectsOverlap(Vec2 a, float aw, float ah, Vec2 b, float bw, float bh) {
+        return a.x < b.x + bw && a.x + aw > b.x && a.y < b.y + bh && a.y + ah > b.y;
     }
 
     void collideVertical() {
@@ -318,8 +439,116 @@ private:
             }
         }
         if (position_.y > 620.0f) {
-            position_ = {70.0f, 260.0f};
-            velocity_ = {};
+            respawn();
+        }
+    }
+
+    void updateMonsters(float dt) {
+        for (Monster& monster : monsters_) {
+            if (!monster.alive) {
+                continue;
+            }
+            monster.x += monster.speed * dt;
+            if (monster.x < monster.minX) {
+                monster.x = monster.minX;
+                monster.speed = std::abs(monster.speed);
+            }
+            if (monster.x > monster.maxX) {
+                monster.x = monster.maxX;
+                monster.speed = -std::abs(monster.speed);
+            }
+        }
+    }
+
+    void checkCoinCollisions(NetworkClient& network) {
+        for (Coin& coin : coins_) {
+            if (coin.collected) {
+                continue;
+            }
+            if (rectsOverlap(position_, 28.0f, 38.0f, {coin.x - 10.0f, coin.y - 10.0f}, 20.0f, 20.0f)) {
+                coin.collected = true;
+                ++collectedCoins_;
+                localScore_ += 10;
+                if (network.connected()) {
+                    network.sendLine("COIN " + std::to_string(coin.id));
+                }
+            }
+        }
+    }
+
+    void checkMonsterCollisions(NetworkClient& network) {
+        if (gameOver_) {
+            return;
+        }
+        if (invulnerableTimer_ > 0.0f) {
+            return;
+        }
+        for (Monster& monster : monsters_) {
+            if (!monster.alive) {
+                continue;
+            }
+            const Vec2 monsterPos{monster.x, monster.y};
+            if (!rectsOverlap(position_, 28.0f, 38.0f, monsterPos, 32.0f, 28.0f)) {
+                continue;
+            }
+
+            const bool stomp = velocity_.y > 0.0f && position_.y + 34.0f < monster.y + 10.0f;
+            if (stomp) {
+                monster.alive = false;
+                velocity_.y = -360.0f;
+                localScore_ += 25;
+            } else {
+                localScore_ = std::max(0, localScore_ - 25);
+                invulnerableTimer_ = 1.2f;
+                if (localScore_ == 0) {
+                    gameOver_ = true;
+                    if (network.connected()) {
+                        network.sendLine("QUIT");
+                        network.disconnect();
+                    }
+                } else {
+                    position_.x = std::max(0.0f, position_.x - 80.0f);
+                    velocity_.y = -260.0f;
+                }
+            }
+        }
+    }
+
+    void respawn() {
+        position_ = {70.0f, 260.0f};
+        velocity_ = {};
+        invulnerableTimer_ = 1.0f;
+    }
+
+    void resetMonsters() {
+        monsters_ = serverMonsters_;
+    }
+
+    void syncWorldObjects(const NetworkClient& network) {
+        if (coins_.empty() && !network.coins().empty()) {
+            coins_ = network.coins();
+            collectedCoins_ = 0;
+        }
+        for (const Coin& serverCoin : network.coins()) {
+            auto local = std::find_if(coins_.begin(), coins_.end(), [&](const Coin& coin) {
+                return coin.id == serverCoin.id;
+            });
+            if (local == coins_.end()) {
+                coins_.push_back(serverCoin);
+                continue;
+            }
+            local->x = serverCoin.x;
+            local->y = serverCoin.y;
+            if (serverCoin.collected && !local->collected) {
+                local->collected = true;
+            }
+        }
+        collectedCoins_ = static_cast<int>(std::count_if(coins_.begin(), coins_.end(), [](const Coin& coin) {
+            return coin.collected;
+        }));
+        if (serverMonsters_.empty() && !network.monsters().empty()) {
+            serverMonsters_ = network.monsters();
+            monsters_ = serverMonsters_;
         }
     }
 
@@ -349,6 +578,35 @@ private:
         const ImVec2 b = world(origin, p.x + p.w, p.y + p.h);
         draw->AddRectFilled(a, b, IM_COL32(136, 83, 39, 255), 4.0f);
         draw->AddRect(a, b, IM_COL32(87, 49, 23, 255), 4.0f, 0, 2.0f);
+    }
+
+    void drawCoins(ImDrawList* draw, const ImVec2& origin) const {
+        for (const Coin& coin : coins_) {
+            if (coin.collected) {
+                continue;
+            }
+            const ImVec2 c = world(origin, coin.x, coin.y);
+            draw->AddCircleFilled(c, 10.0f, IM_COL32(255, 206, 54, 255));
+            draw->AddCircle(c, 10.0f, IM_COL32(178, 117, 18, 255), 20, 2.0f);
+            draw->AddLine({c.x, c.y - 6.0f}, {c.x, c.y + 6.0f}, IM_COL32(255, 246, 178, 255), 2.0f);
+        }
+    }
+
+    void drawMonsters(ImDrawList* draw, const ImVec2& origin) const {
+        for (const Monster& monster : monsters_) {
+            if (!monster.alive) {
+                continue;
+            }
+            const ImVec2 a = world(origin, monster.x, monster.y);
+            const ImVec2 b = world(origin, monster.x + 32.0f, monster.y + 28.0f);
+            draw->AddRectFilled(a, b, IM_COL32(121, 75, 35, 255), 8.0f);
+            draw->AddRect(a, b, IM_COL32(57, 31, 16, 255), 8.0f, 0, 2.0f);
+            draw->AddCircleFilled({a.x + 9.0f, a.y + 10.0f}, 3.0f, IM_COL32(255, 255, 255, 255));
+            draw->AddCircleFilled({a.x + 23.0f, a.y + 10.0f}, 3.0f, IM_COL32(255, 255, 255, 255));
+            draw->AddCircleFilled({a.x + 10.0f, a.y + 10.0f}, 1.5f, IM_COL32(20, 20, 20, 255));
+            draw->AddCircleFilled({a.x + 24.0f, a.y + 10.0f}, 1.5f, IM_COL32(20, 20, 20, 255));
+            draw->AddLine({a.x + 8.0f, b.y - 6.0f}, {b.x - 8.0f, b.y - 6.0f}, IM_COL32(40, 18, 12, 255), 2.0f);
+        }
     }
 
     void drawMario(ImDrawList* draw, const ImVec2& origin, Vec2 pos, ImU32 hatColor) const {
@@ -386,12 +644,24 @@ private:
         const std::string status = std::string("Network: ") + network.status() + "   player=" + std::to_string(network.playerId());
         draw->AddText({origin.x + 34.0f, origin.y + 28.0f}, IM_COL32(255, 255, 255, 255), "Super Mario Network Client");
         draw->AddText({origin.x + 34.0f, origin.y + 50.0f}, IM_COL32(255, 235, 170, 255), status.c_str());
+        const std::string stats = "HP " + std::to_string(hp_) + "   Coins " + std::to_string(collectedCoins_) + "/" +
+                                  std::to_string(coins_.size()) + "   Score " + std::to_string(localScore_);
+        draw->AddText({origin.x + size.x - 330.0f, origin.y + 50.0f}, IM_COL32(255, 255, 255, 255), stats.c_str());
+        if (gameOver_) {
+            draw->AddText({origin.x + size.x * 0.5f - 90.0f, origin.y + 110.0f}, IM_COL32(255, 70, 70, 255),
+                          "GAME OVER - score reached 0");
+        }
     }
 
     Vec2 position_{70.0f, 260.0f};
     Vec2 velocity_{};
     bool onGround_ = false;
     bool queuedJump_ = false;
+    int hp_ = 100;
+    int localScore_ = 50;
+    int collectedCoins_ = 0;
+    bool gameOver_ = false;
+    float invulnerableTimer_ = 0.0f;
     float cameraX_ = 0.0f;
     float sendTimer_ = 0.0f;
     float stateTimer_ = 0.0f;
@@ -400,6 +670,9 @@ private:
         {850.0f, 360.0f, 150.0f, 28.0f}, {1180.0f, 315.0f, 180.0f, 28.0f}, {1500.0f, 355.0f, 220.0f, 28.0f},
         {1850.0f, 305.0f, 190.0f, 28.0f}
     };
+    std::vector<Coin> coins_;
+    std::vector<Monster> serverMonsters_;
+    std::vector<Monster> monsters_;
 };
 
 void glfwErrorCallback(int error, const char* description) {
@@ -503,7 +776,13 @@ int main() {
         ImGui::Spacing();
         ImGui::TextWrapped("Status: %s", network.status().c_str());
         ImGui::Text("Local player id: %d", network.playerId());
-        ImGui::TextWrapped("Controls: A/D or arrows move, Space/W jumps. Position is sent to server as POS x y.");
+        ImGui::Text("HP: %d", game.hp());
+        ImGui::Text("Coins: %d/%d", game.collectedCoins(), game.totalCoins());
+        ImGui::Text("Local score: %d", game.localScore());
+        if (game.gameOver()) {
+            ImGui::TextColored({1.0f, 0.28f, 0.24f, 1.0f}, "Game over: score reached 0");
+        }
+        ImGui::TextWrapped("Controls: A/D or arrows move, Space/W jumps. Coins add 10, stomps add 25, monster side hits subtract 25. Score 0 disconnects.");
 
         ImGui::Spacing();
         ImGui::Text("Players");
