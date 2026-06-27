@@ -4,6 +4,10 @@
 #include "super_mario_types.h"
 #include "ecs_poc.h"
 
+#include <mutex>
+#include <queue>
+
+
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -21,6 +25,19 @@ public:
     void tick(int ms) override;
 
 private:
+    struct PlayerInput {
+        // If setPos is true, this is a position update (px,py). Otherwise use dx,dy as delta move.
+        bool setPos = false;
+        int px = 0;
+        int py = 0;
+        int dx = 0;
+        int dy = 0;
+    };
+
+    // Inputs queued by handleCommand and consumed by tick().
+    mutable std::mutex inputMutex_;
+    std::queue<std::pair<int, PlayerInput>> inputQueue_;
+
     static std::string commandName(const std::string& commandLine);
     Player* find(int playerId);
 

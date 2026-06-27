@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <cstdlib>
 #include <sstream>
+#include <cmath>
+#include <utility>
 
 namespace supermario {
 
@@ -66,21 +68,32 @@ std::string SuperMarioGameWorld::handleCommand(int playerId, const std::string& 
         int dx = 0;
         int dy = 0;
         input >> dx >> dy;
-        player->x = std::clamp(player->x + dx, -100, 100);
-        player->y = std::clamp(player->y + dy, -100, 100);
-        player->score += std::max(1, std::abs(dx) + std::abs(dy));
-        return "OK MOVE player=" + std::to_string(playerId) + " x=" + std::to_string(player->x) +
-               " y=" + std::to_string(player->y) + " score=" + std::to_string(player->score) + "\n";
+        PlayerInput pi;
+        pi.setPos = false;
+        pi.dx = dx;
+        pi.dy = dy;
+        {
+            std::lock_guard lock(inputMutex_);
+            inputQueue_.emplace(playerId, pi);
+        }
+        return "OK MOVE queued player=" + std::to_string(playerId) + " dx=" + std::to_string(dx) +
+               " dy=" + std::to_string(dy) + "\n";
     }
 
     if (command == "POS") {
         int x = 0;
         int y = 0;
         input >> x >> y;
-        player->x = std::clamp(x, 0, 2400);
-        player->y = std::clamp(y, 0, 720);
-        return "OK POS player=" + std::to_string(playerId) + " x=" + std::to_string(player->x) +
-               " y=" + std::to_string(player->y) + " score=" + std::to_string(player->score) + "\n";
+        PlayerInput pi;
+        pi.setPos = true;
+        pi.px = x;
+        pi.py = y;
+        {
+            std::lock_guard lock(inputMutex_);
+            inputQueue_.emplace(playerId, pi);
+        }
+        return "OK POS queued player=" + std::to_string(playerId) + " x=" + std::to_string(x) +
+               " y=" + std::to_string(y) + "\n";
     }
 
     if (command == "COIN") {
@@ -170,6 +183,58 @@ void SuperMarioGameWorld::tick(int ms) {
     // For POC define server tick unit as 100ms -> one ECS tick per 100ms.
     const int ticks = std::max(1, ms / 100);
     ecs_.update(ticks);
+
+    // Consume queued player inputs and apply simple collision checks (bounds, coins, monsters).
+    std::queue<std::pair<int, PlayerInput>> pending;
+    {
+        std::lock_guard lock(inputMutex_);
+        std::swap(pending, inputQueue_);
+    }
+
+    const auto curMonsters = ecs_.snapshotMonsters();
+
+    while (!pending.empty()) {
+        const auto [pid, in] = pending.front();
+        pending.pop();
+        auto it = players_.find(pid);
+        if (it == players_.end()) continue;
+        Player& pl = it->second;
+
+        if (in.setPos) {
+            pl.x = std::clamp(in.px, 0, 2400);
+            pl.y = std::clamp(in.py, 0, 720);
+        } else {
+            // treat dx/dy as delta applied directly (POC). In a full system, inputs are velocities.
+            pl.x = std::clamp(pl.x + in.dx, 0, 2400);
+            pl.y = std::clamp(pl.y + in.dy, 0, 720);
+            pl.score += std::max(1, std::abs(in.dx) + std::abs(in.dy));
+        }
+
+        // Check coins: simple proximity (within 24 px)
+        for (auto& coin : coins_) {
+            if (coin.collected) continue;
+            const int dx = pl.x - coin.x;
+            const int dy = pl.y - coin.y;
+            const int dist2 = dx * dx + dy * dy;
+            if (dist2 <= 24 * 24) {
+                coin.collected = true;
+                pl.score += 10;
+            }
+        }
+
+        // Check monster collisions: proximity threshold 28x32 (POC)
+        for (const auto& m : curMonsters) {
+            const int mdx = pl.x - m.x;
+            const int mdy = pl.y - m.y;
+            const int mxOverlapX = 32;
+            const int myOverlapY = 28;
+            if (std::abs(mdx) < mxOverlapX && std::abs(mdy) < myOverlapY) {
+                // simple damage
+                pl.hp = std::max(0, pl.hp - 10);
+            }
+        }
+    }
 }
+
 
 } // namespace supermario
