@@ -34,13 +34,6 @@ void throwErrno(const char* what) {
     throw std::runtime_error(std::string(what) + ": " + std::strerror(errno));
 }
 
-std::string ensureNewline(std::string data) {
-    if (data.empty() || data.back() != '\n') {
-        data.push_back('\n');
-    }
-    return data;
-}
-
 void setFdNonBlocking(int fd) {
     const int flags = fcntl(fd, F_GETFL, 0);
     if (flags < 0 || fcntl(fd, F_SETFL, flags | O_NONBLOCK) < 0) {
@@ -370,7 +363,7 @@ void WorkerGameServer::handleConnectionService(const SkynetMessage& message) {
             SkynetMessage command;
             command.source = ServiceId::Connection;
             command.kind = MessageKind::GameCommand;
-            command.gameCommand = GameCommand{GameCommandType::Join, socket.fd, 0, {}};
+            command.gameCommand = sessions_.at(socket.fd).makeJoinCommand();
             sendToService(ServiceId::GameWorld, std::move(command));
             break;
         }
@@ -380,12 +373,12 @@ void WorkerGameServer::handleConnectionService(const SkynetMessage& message) {
                 break;
             }
 
-            auto lines = it->second.pushSocketData(socket.data);
-            for (auto& line : lines) {
+            auto commands = it->second.onSocketData(socket.data);
+            for (auto& gameCommand : commands) {
                 SkynetMessage command;
                 command.source = ServiceId::Connection;
                 command.kind = MessageKind::GameCommand;
-                command.gameCommand = GameCommand{GameCommandType::Command, socket.fd, it->second.playerId(), std::move(line)};
+                command.gameCommand = std::move(gameCommand);
                 sendToService(ServiceId::GameWorld, std::move(command));
             }
             break;
@@ -397,17 +390,20 @@ void WorkerGameServer::handleConnectionService(const SkynetMessage& message) {
                 queueSocketCommand(SocketCommand{SocketCommandType::Close, socket.fd, {}});
                 break;
             }
-            it->second.markClosing();
-            if (it->second.playerId() > 0) {
+            const auto plan = it->second.beginDisconnect();
+            if (plan.sendLeaveToWorld) {
                 SkynetMessage command;
                 command.source = ServiceId::Connection;
                 command.kind = MessageKind::GameCommand;
-                command.gameCommand = GameCommand{GameCommandType::Leave, socket.fd, it->second.playerId(), {}};
+                command.gameCommand = it->second.makeLeaveCommand();
                 sendToService(ServiceId::GameWorld, std::move(command));
-            } else {
+            }
+            if (plan.eraseSession) {
                 sessions_.erase(it);
             }
-            queueSocketCommand(SocketCommand{SocketCommandType::Close, socket.fd, {}});
+            if (plan.closeSocket) {
+                queueSocketCommand(SocketCommand{SocketCommandType::Close, socket.fd, {}});
+            }
             break;
         }
         }
@@ -420,32 +416,18 @@ void WorkerGameServer::handleConnectionService(const SkynetMessage& message) {
 
     const GameResponse& response = message.gameResponse;
     auto it = sessions_.find(response.fd);
-    if (response.type == GameResponseType::Joined) {
-        if (it == sessions_.end()) {
-            return;
-        }
-        it->second.setPlayerId(response.playerId);
-        queueSocketCommand(SocketCommand{SocketCommandType::Send, response.fd, response.text});
-        return;
-    }
-
-    if (response.type == GameResponseType::LeaveAck) {
-        sessions_.erase(response.fd);
-        if (!response.text.empty()) {
-            queueSocketCommand(SocketCommand{SocketCommandType::Send, response.fd, response.text});
-        }
-        if (response.closeAfterSend) {
-            queueSocketCommand(SocketCommand{SocketCommandType::Close, response.fd, {}});
-        }
-        return;
-    }
-
     if (it == sessions_.end()) {
         return;
     }
-    queueSocketCommand(SocketCommand{SocketCommandType::Send, response.fd, response.text});
-    if (response.closeAfterSend) {
-        it->second.markClosing();
+
+    auto plan = it->second.onWorldResponse(response);
+    if (plan.eraseSession) {
+        sessions_.erase(response.fd);
+    }
+    if (!plan.outboundText.empty()) {
+        queueSocketCommand(SocketCommand{SocketCommandType::Send, response.fd, std::move(plan.outboundText)});
+    }
+    if (plan.closeSocket) {
         queueSocketCommand(SocketCommand{SocketCommandType::Close, response.fd, {}});
     }
 }
@@ -463,8 +445,6 @@ void WorkerGameServer::handleGameWorldService(const SkynetMessage& message) {
         const int playerId = world_.join();
         response.type = GameResponseType::Joined;
         response.playerId = playerId;
-        response.text = ensureNewline("WELCOME player=" + std::to_string(playerId));
-        response.text += "COMMANDS INPUT seq vx vy | MOVE dx dy | POS x y | ATTACK playerId | COIN coinId | STATE | PING | QUIT\n";
         response.text += world_.snapshot();
 
         SkynetMessage room;
