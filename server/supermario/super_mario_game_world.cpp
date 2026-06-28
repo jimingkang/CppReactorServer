@@ -198,14 +198,13 @@ void SuperMarioGameWorld::tick(int ms) {
     while (!pending.empty()) {
         const auto [pid, in] = pending.front();
         pending.pop();
+
         if (!in.setPos) {
-            // Apply velocity input by modifying ECS player entity velocity
-            // POC: This is a simplified approach; in a full ECS we'd have cleaner systems
-            Player* pl = ecs_.getPlayer(pid);
-            if (pl) {
-                // velocity stored as part of player data in ECS, modified via direct access
-                // will be integrated in updatePhysics()
-            }
+            // Apply velocity input to ECS player entity
+            ecs_.setPlayerVelocity(pid, in.dx, in.dy);
+        } else {
+            // setPos case: set absolute position directly (backward compat)
+            ecs_.setPlayerPosition(pid, in.px, in.py);
         }
     }
 

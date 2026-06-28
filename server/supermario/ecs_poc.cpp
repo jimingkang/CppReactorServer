@@ -87,6 +87,25 @@ const Player* GameECS::getPlayer(int playerId) const {
     return reinterpret_cast<const Player*>(&pe);
 }
 
+void GameECS::setPlayerVelocity(int playerId, int vx, int vy) {
+    auto it = playerEntities_.find(playerId);
+    if (it != playerEntities_.end()) {
+        it->second.vel.vx = vx;
+        it->second.vel.vy = vy;
+    }
+}
+
+void GameECS::setPlayerPosition(int playerId, int x, int y) {
+    auto it = playerEntities_.find(playerId);
+    if (it != playerEntities_.end()) {
+        it->second.pos.x = std::clamp(x, 0, 2400);
+        it->second.pos.y = std::clamp(y, 0, 720);
+        // Reset velocity when position is set (POC: teleport doesn't preserve momentum)
+        it->second.vel.vx = 0;
+        it->second.vel.vy = 0;
+    }
+}
+
 std::vector<Player> GameECS::snapshotPlayers() const {
     std::vector<Player> out;
     out.reserve(playerEntities_.size());

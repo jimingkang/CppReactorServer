@@ -46,6 +46,8 @@ public:
     bool hasPlayer(int playerId) const { return playerEntities_.count(playerId) > 0; }
     Player* getPlayer(int playerId);
     const Player* getPlayer(int playerId) const;
+    void setPlayerVelocity(int playerId, int vx, int vy);
+    void setPlayerPosition(int playerId, int x, int y);
     std::vector<Player> snapshotPlayers() const;
 
     // Unified physics & collision update per tick

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "supermario/super_mario_game_world.h"
+#include "supermario/super_mario_session_agent.h"
 
 #include <atomic>
 #include <condition_variable>
@@ -148,12 +149,6 @@ private:
         bool closing = false;
     };
 
-    struct ClientSession {
-        int playerId = 0;
-        std::string input;
-        bool closing = false;
-    };
-
     void socketLoop();
     void workerLoop(std::size_t workerId);
 
@@ -207,5 +202,5 @@ private:
     std::unordered_map<int, ClientSocket> sockets_;
 
     supermario::SuperMarioGameWorld world_;
-    std::unordered_map<int, ClientSession> sessions_;
+    std::unordered_map<int, supermario::SuperMarioSessionAgent> sessions_;
 };

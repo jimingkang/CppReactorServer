@@ -34,13 +34,6 @@ void throwErrno(const char* what) {
     throw std::runtime_error(std::string(what) + ": " + std::strerror(errno));
 }
 
-std::string trimLine(std::string line) {
-    while (!line.empty() && (line.back() == '\n' || line.back() == '\r')) {
-        line.pop_back();
-    }
-    return line;
-}
-
 std::string ensureNewline(std::string data) {
     if (data.empty() || data.back() != '\n') {
         data.push_back('\n');
@@ -373,7 +366,7 @@ void WorkerGameServer::handleConnectionService(const SkynetMessage& message) {
         const SocketMessage& socket = message.socket;
         switch (socket.type) {
         case SocketMessageType::Accept: {
-            sessions_[socket.fd] = ClientSession{};
+            sessions_.emplace(socket.fd, supermario::SuperMarioSessionAgent{socket.fd});
             SkynetMessage command;
             command.source = ServiceId::Connection;
             command.kind = MessageKind::GameCommand;
@@ -383,24 +376,16 @@ void WorkerGameServer::handleConnectionService(const SkynetMessage& message) {
         }
         case SocketMessageType::Data: {
             auto it = sessions_.find(socket.fd);
-            if (it == sessions_.end() || it->second.closing) {
+            if (it == sessions_.end() || it->second.closing()) {
                 break;
             }
 
-            ClientSession& session = it->second;
-            session.input += socket.data;
-            std::size_t pos = 0;
-            while ((pos = session.input.find('\n')) != std::string::npos) {
-                std::string line = trimLine(session.input.substr(0, pos + 1));
-                session.input.erase(0, pos + 1);
-                if (line.empty()) {
-                    continue;
-                }
-
+            auto lines = it->second.pushSocketData(socket.data);
+            for (auto& line : lines) {
                 SkynetMessage command;
                 command.source = ServiceId::Connection;
                 command.kind = MessageKind::GameCommand;
-                command.gameCommand = GameCommand{GameCommandType::Command, socket.fd, session.playerId, std::move(line)};
+                command.gameCommand = GameCommand{GameCommandType::Command, socket.fd, it->second.playerId(), std::move(line)};
                 sendToService(ServiceId::GameWorld, std::move(command));
             }
             break;
@@ -412,12 +397,12 @@ void WorkerGameServer::handleConnectionService(const SkynetMessage& message) {
                 queueSocketCommand(SocketCommand{SocketCommandType::Close, socket.fd, {}});
                 break;
             }
-            it->second.closing = true;
-            if (it->second.playerId > 0) {
+            it->second.markClosing();
+            if (it->second.playerId() > 0) {
                 SkynetMessage command;
                 command.source = ServiceId::Connection;
                 command.kind = MessageKind::GameCommand;
-                command.gameCommand = GameCommand{GameCommandType::Leave, socket.fd, it->second.playerId, {}};
+                command.gameCommand = GameCommand{GameCommandType::Leave, socket.fd, it->second.playerId(), {}};
                 sendToService(ServiceId::GameWorld, std::move(command));
             } else {
                 sessions_.erase(it);
@@ -439,7 +424,7 @@ void WorkerGameServer::handleConnectionService(const SkynetMessage& message) {
         if (it == sessions_.end()) {
             return;
         }
-        it->second.playerId = response.playerId;
+        it->second.setPlayerId(response.playerId);
         queueSocketCommand(SocketCommand{SocketCommandType::Send, response.fd, response.text});
         return;
     }
@@ -460,7 +445,7 @@ void WorkerGameServer::handleConnectionService(const SkynetMessage& message) {
     }
     queueSocketCommand(SocketCommand{SocketCommandType::Send, response.fd, response.text});
     if (response.closeAfterSend) {
-        it->second.closing = true;
+        it->second.markClosing();
         queueSocketCommand(SocketCommand{SocketCommandType::Close, response.fd, {}});
     }
 }
@@ -478,7 +463,9 @@ void WorkerGameServer::handleGameWorldService(const SkynetMessage& message) {
         const int playerId = world_.join();
         response.type = GameResponseType::Joined;
         response.playerId = playerId;
-        response.text = ensureNewline("WELCOME player=" + std::to_string(playerId) + " type HELP");
+        response.text = ensureNewline("WELCOME player=" + std::to_string(playerId));
+        response.text += "COMMANDS INPUT seq vx vy | MOVE dx dy | POS x y | ATTACK playerId | COIN coinId | STATE | PING | QUIT\n";
+        response.text += world_.snapshot();
 
         SkynetMessage room;
         room.source = ServiceId::GameWorld;

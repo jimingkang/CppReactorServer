@@ -34,6 +34,7 @@ add_executable(supermario_server_workers
         ../socket_utils.cpp
         ../game_world.cpp
         super_mario_game_world.cpp
+        super_mario_session_agent.cpp
         ecs_poc.cpp
 )
 target_compile_features(supermario_server_workers PRIVATE cxx_std_20)
