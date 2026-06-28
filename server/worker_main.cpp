@@ -1,4 +1,5 @@
 #include "worker_server.h"
+#include "supermario/super_mario_server_binding.h"
 
 #include <cstdlib>
 #include <exception>
@@ -13,7 +14,7 @@ int main(int argc, char** argv) {
                                          : std::max(1u, std::thread::hardware_concurrency());
 
     try {
-        WorkerGameServer server(host, port, workers);
+        WorkerGameServer server(host, port, workers, std::make_unique<supermario::SuperMarioServerBinding>());
         server.run();
     } catch (const std::exception& ex) {
         std::cerr << "worker_game_server error: " << ex.what() << '\n';

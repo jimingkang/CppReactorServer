@@ -47,50 +47,27 @@ std::size_t serviceIndex(ServiceId id) {
 
 } // namespace
 
-ServiceQueue::ServiceQueue(ServiceId id) : id_(id) {}
-
-ServiceId ServiceQueue::id() const noexcept {
-    return id_;
-}
-
-bool ServiceQueue::push(SkynetMessage message) {
-    std::lock_guard lock(mutex_);
-    queue_.push(std::move(message));
-    if (scheduled_) {
-        return false;
+WorkerGameServer::WorkerGameServer(std::string host, int port, std::size_t workerCount, std::unique_ptr<IGameServerBinding> binding)
+    : host_(std::move(host)),
+      port_(port),
+      workerCount_(workerCount == 0 ? 1 : workerCount),
+      binding_(std::move(binding)),
+      world_(binding_ ? binding_->createWorld() : nullptr) {
+    if (!binding_) {
+        throw std::invalid_argument("WorkerGameServer requires a binding");
     }
-    scheduled_ = true;
-    return true;
-}
-
-bool ServiceQueue::popOne(SkynetMessage& message) {
-    std::lock_guard lock(mutex_);
-    if (queue_.empty()) {
-        return false;
+    if (!world_) {
+        throw std::invalid_argument("WorkerGameServer binding returned null world");
     }
-    message = std::move(queue_.front());
-    queue_.pop();
-    return true;
-}
 
-bool ServiceQueue::finishBatch() {
-    std::lock_guard lock(mutex_);
-    if (queue_.empty()) {
-        scheduled_ = false;
-        return false;
-    }
-    return true;
-}
-
-WorkerGameServer::WorkerGameServer(std::string host, int port, std::size_t workerCount)
-    : host_(std::move(host)), port_(port), workerCount_(workerCount == 0 ? 1 : workerCount) {
-    services_.reserve(6);
-    services_.push_back(std::make_unique<ServiceQueue>(ServiceId::Logger));
-    services_.push_back(std::make_unique<ServiceQueue>(ServiceId::Gate));
-    services_.push_back(std::make_unique<ServiceQueue>(ServiceId::Connection));
-    services_.push_back(std::make_unique<ServiceQueue>(ServiceId::GameWorld));
-    services_.push_back(std::make_unique<ServiceQueue>(ServiceId::Room));
-    services_.push_back(std::make_unique<ServiceQueue>(ServiceId::Db));
+    services_.reserve(7);
+    services_.push_back(std::make_unique<LoggerServiceContext>());
+    services_.push_back(std::make_unique<GateServiceContext>());
+    services_.push_back(std::make_unique<ConnectionServiceContext>());
+    services_.push_back(std::make_unique<GameWorldServiceContext>());
+    services_.push_back(std::make_unique<RoomServiceContext>());
+    services_.push_back(std::make_unique<LoginServiceContext>());
+    services_.push_back(std::make_unique<DbServiceContext>(binding_->seedUsers()));
 }
 
 WorkerGameServer::~WorkerGameServer() {
@@ -137,7 +114,7 @@ void WorkerGameServer::run() {
         while (running_.load()) {
             const auto start = std::chrono::steady_clock::now();
             try {
-                world_.tick(static_cast<int>(interval.count()));
+                world_->tick(static_cast<int>(interval.count()));
             } catch (const std::exception& ex) {
                 std::cerr << "world.tick error: " << ex.what() << '\n';
             }
@@ -149,7 +126,7 @@ void WorkerGameServer::run() {
     });
 
     std::cout << "worker_game_server listening on " << host_ << ':' << port_
-              << " workers=" << workerCount_ << " services=logger,gate,connection,gameworld,room,db\n";
+              << " workers=" << workerCount_ << " services=logger,gate,connection,gameworld,room,login,db\n";
     socketLoop();
 }
 
@@ -259,87 +236,73 @@ void WorkerGameServer::socketLoop() {
 void WorkerGameServer::workerLoop(std::size_t workerId) {
     (void)workerId;
     while (true) {
-        ServiceQueue* queue = waitReadyService();
-        if (queue == nullptr) {
+        ServiceContext* context = waitReadyService();
+        if (context == nullptr) {
             return;
         }
 
         SkynetMessage message;
         int handled = 0;
         constexpr int maxBatch = 64;
-        while (handled < maxBatch && queue->popOne(message)) {
-            dispatchMessage(message);
+        while (handled < maxBatch && context->popOne(message)) {
+            context->dispatch(*this, message);
             ++handled;
         }
 
-        if (queue->finishBatch()) {
-            rescheduleService(*queue);
+        const bool hasMore = context->finishBatch();
+        const bool retired = collectFinishedSession(*context);
+        if (hasMore && !retired) {
+            rescheduleService(*context);
         }
     }
 }
 
 void WorkerGameServer::sendToService(ServiceId destination, SkynetMessage message) {
     message.destination = destination;
-    ServiceQueue& queue = serviceQueue(destination);
-    if (!queue.push(std::move(message))) {
-        return;
-    }
-    rescheduleService(queue);
+    sendToContext(serviceContext(destination), std::move(message));
 }
 
-ServiceQueue* WorkerGameServer::waitReadyService() {
+void WorkerGameServer::sendToContext(ServiceContext& context, SkynetMessage message) {
+    if (!context.push(std::move(message))) {
+        return;
+    }
+    rescheduleService(context);
+}
+
+ServiceContext* WorkerGameServer::waitReadyService() {
     std::unique_lock lock(globalMutex_);
     globalReady_.wait(lock, [&] { return servicesStopped_ || !globalQueue_.empty(); });
     if (globalQueue_.empty()) {
         return nullptr;
     }
-    ServiceQueue* queue = globalQueue_.front();
+    ServiceContext* context = globalQueue_.front();
     globalQueue_.pop();
-    return queue;
+    return context;
 }
 
-void WorkerGameServer::rescheduleService(ServiceQueue& queue) {
+void WorkerGameServer::rescheduleService(ServiceContext& context) {
     {
         std::lock_guard lock(globalMutex_);
         if (servicesStopped_) {
             return;
         }
-        globalQueue_.push(&queue);
+        globalQueue_.push(&context);
     }
     globalReady_.notify_one();
 }
 
-ServiceQueue& WorkerGameServer::serviceQueue(ServiceId id) {
+bool WorkerGameServer::collectFinishedSession(ServiceContext& context) {
+    auto* session = dynamic_cast<SessionServiceContext*>(&context);
+    if (session == nullptr || !session->retired()) {
+        return false;
+    }
+    session->clearPending();
+    removeSessionContext(session->fd());
+    return true;
+}
+
+ServiceContext& WorkerGameServer::serviceContext(ServiceId id) {
     return *services_.at(serviceIndex(id));
-}
-
-void WorkerGameServer::dispatchMessage(const SkynetMessage& message) {
-    switch (message.destination) {
-    case ServiceId::Logger:
-        handleLoggerService(message);
-        break;
-    case ServiceId::Gate:
-        handleGateService(message);
-        break;
-    case ServiceId::Connection:
-        handleConnectionService(message);
-        break;
-    case ServiceId::GameWorld:
-        handleGameWorldService(message);
-        break;
-    case ServiceId::Room:
-        handleRoomService(message);
-        break;
-    case ServiceId::Db:
-        handleDbService(message);
-        break;
-    }
-}
-
-void WorkerGameServer::handleLoggerService(const SkynetMessage& message) {
-    if (message.kind == MessageKind::Log && !message.text.empty()) {
-        std::cout << message.text << '\n';
-    }
 }
 
 void WorkerGameServer::handleGateService(const SkynetMessage& message) {
@@ -354,59 +317,77 @@ void WorkerGameServer::handleGateService(const SkynetMessage& message) {
     sendToService(ServiceId::Connection, std::move(forwarded));
 }
 
+void WorkerGameServer::logText(std::string text) {
+    SkynetMessage log;
+    log.source = ServiceId::Connection;
+    log.kind = MessageKind::Log;
+    log.text = std::move(text);
+    sendToService(ServiceId::Logger, std::move(log));
+}
+
+void WorkerGameServer::applySessionActions(const SessionActions& actions) {
+    for (const auto& socketCommand : actions.socketCommands) {
+        queueSocketCommand(socketCommand);
+    }
+    for (auto serviceMessage : actions.serviceMessages) {
+        if (serviceMessage.source == ServiceId::Gate) {
+            serviceMessage.source = ServiceId::Connection;
+        }
+        sendToService(serviceMessage.destination, std::move(serviceMessage));
+    }
+}
+
+SessionServiceContext* WorkerGameServer::sessionContext(int fd) {
+    const auto it = sessions_.find(fd);
+    return it == sessions_.end() ? nullptr : it->second.get();
+}
+
+void WorkerGameServer::removeSessionContext(int fd) {
+    sessions_.erase(fd);
+}
+
 void WorkerGameServer::handleConnectionService(const SkynetMessage& message) {
     if (message.kind == MessageKind::Socket) {
         const SocketMessage& socket = message.socket;
         switch (socket.type) {
         case SocketMessageType::Accept: {
-            sessions_.emplace(socket.fd, supermario::SuperMarioSessionAgent{socket.fd});
-            SkynetMessage command;
-            command.source = ServiceId::Connection;
-            command.kind = MessageKind::GameCommand;
-            command.gameCommand = sessions_.at(socket.fd).makeJoinCommand();
-            sendToService(ServiceId::GameWorld, std::move(command));
+            auto session = std::make_unique<SessionServiceContext>(binding_->createSessionAgent(socket.fd));
+            auto* ctx = session.get();
+            sessions_.emplace(socket.fd, std::move(session));
+            sendToContext(*ctx, message);
+            logText("accept fd=" + std::to_string(socket.fd));
             break;
         }
         case SocketMessageType::Data: {
-            auto it = sessions_.find(socket.fd);
-            if (it == sessions_.end() || it->second.closing()) {
+            auto* ctx = sessionContext(socket.fd);
+            if (ctx == nullptr || ctx->closing()) {
                 break;
             }
-
-            auto commands = it->second.onSocketData(socket.data);
-            for (auto& gameCommand : commands) {
-                SkynetMessage command;
-                command.source = ServiceId::Connection;
-                command.kind = MessageKind::GameCommand;
-                command.gameCommand = std::move(gameCommand);
-                sendToService(ServiceId::GameWorld, std::move(command));
-            }
+            sendToContext(*ctx, message);
             break;
         }
         case SocketMessageType::Close:
         case SocketMessageType::Error: {
-            auto it = sessions_.find(socket.fd);
-            if (it == sessions_.end()) {
+            auto* ctx = sessionContext(socket.fd);
+            if (ctx == nullptr) {
                 queueSocketCommand(SocketCommand{SocketCommandType::Close, socket.fd, {}});
                 break;
             }
-            const auto plan = it->second.beginDisconnect();
-            if (plan.sendLeaveToWorld) {
-                SkynetMessage command;
-                command.source = ServiceId::Connection;
-                command.kind = MessageKind::GameCommand;
-                command.gameCommand = it->second.makeLeaveCommand();
-                sendToService(ServiceId::GameWorld, std::move(command));
-            }
-            if (plan.eraseSession) {
-                sessions_.erase(it);
-            }
-            if (plan.closeSocket) {
-                queueSocketCommand(SocketCommand{SocketCommandType::Close, socket.fd, {}});
-            }
+            sendToContext(*ctx, message);
+            logText("disconnect fd=" + std::to_string(socket.fd));
             break;
         }
         }
+        return;
+    }
+
+    if (message.kind == MessageKind::Login) {
+        const LoginMessage& response = message.login;
+        auto* ctx = sessionContext(response.fd);
+        if (ctx == nullptr) {
+            return;
+        }
+        sendToContext(*ctx, message);
         return;
     }
 
@@ -415,21 +396,11 @@ void WorkerGameServer::handleConnectionService(const SkynetMessage& message) {
     }
 
     const GameResponse& response = message.gameResponse;
-    auto it = sessions_.find(response.fd);
-    if (it == sessions_.end()) {
+    auto* ctx = sessionContext(response.fd);
+    if (ctx == nullptr) {
         return;
     }
-
-    auto plan = it->second.onWorldResponse(response);
-    if (plan.eraseSession) {
-        sessions_.erase(response.fd);
-    }
-    if (!plan.outboundText.empty()) {
-        queueSocketCommand(SocketCommand{SocketCommandType::Send, response.fd, std::move(plan.outboundText)});
-    }
-    if (plan.closeSocket) {
-        queueSocketCommand(SocketCommand{SocketCommandType::Close, response.fd, {}});
-    }
+    sendToContext(*ctx, message);
 }
 
 void WorkerGameServer::handleGameWorldService(const SkynetMessage& message) {
@@ -442,10 +413,10 @@ void WorkerGameServer::handleGameWorldService(const SkynetMessage& message) {
     response.fd = command.fd;
 
     if (command.type == GameCommandType::Join) {
-        const int playerId = world_.join();
+        const int playerId = world_->join();
         response.type = GameResponseType::Joined;
         response.playerId = playerId;
-        response.text += world_.snapshot();
+        response.text += world_->snapshot();
 
         SkynetMessage room;
         room.source = ServiceId::GameWorld;
@@ -455,7 +426,7 @@ void WorkerGameServer::handleGameWorldService(const SkynetMessage& message) {
     } else if (command.type == GameCommandType::Leave) {
         response.type = GameResponseType::LeaveAck;
         response.playerId = command.playerId;
-        response.text = world_.leave(command.playerId);
+        response.text = world_->leave(command.playerId);
         response.closeAfterSend = true;
 
         SkynetMessage room;
@@ -470,11 +441,11 @@ void WorkerGameServer::handleGameWorldService(const SkynetMessage& message) {
         db.db = DbMessage{DbMessageType::SavePlayer, command.playerId};
         sendToService(ServiceId::Db, std::move(db));
     } else {
-        std::string result = world_.handleCommand(command.playerId, command.line);
+        std::string result = world_->handleCommand(command.playerId, command.line);
         if (result == "QUIT\n") {
             response.type = GameResponseType::LeaveAck;
             response.playerId = command.playerId;
-            response.text = world_.leave(command.playerId);
+            response.text = world_->leave(command.playerId);
             response.closeAfterSend = true;
         } else {
             response.type = GameResponseType::Text;
@@ -488,22 +459,6 @@ void WorkerGameServer::handleGameWorldService(const SkynetMessage& message) {
     outbound.kind = MessageKind::GameResponse;
     outbound.gameResponse = std::move(response);
     sendToService(ServiceId::Connection, std::move(outbound));
-}
-
-void WorkerGameServer::handleRoomService(const SkynetMessage& message) {
-    if (message.kind != MessageKind::Room) {
-        return;
-    }
-    // RoomService is a placeholder for room/map sharding. It intentionally has
-    // its own queue so workers can schedule it independently from GameWorld.
-}
-
-void WorkerGameServer::handleDbService(const SkynetMessage& message) {
-    if (message.kind != MessageKind::Db) {
-        return;
-    }
-    // DbService is a placeholder for async persistence. Real implementations
-    // would batch writes or hand them to a database client thread here.
 }
 
 void WorkerGameServer::queueSocketMessage(SocketMessage message) {

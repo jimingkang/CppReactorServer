@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../worker_protocol.h"
+#include "../i_session_agent.h"
 
 #include <string>
 #include <string_view>
@@ -8,41 +8,33 @@
 
 namespace supermario {
 
-struct DisconnectPlan {
-    bool sendLeaveToWorld = false;
-    int playerId = 0;
-    bool eraseSession = false;
-    bool closeSocket = true;
-};
-
-struct ResponsePlan {
-    std::string outboundText;
-    bool eraseSession = false;
-    bool closeSocket = false;
-};
-
-class SuperMarioSessionAgent {
+class SuperMarioSessionAgent final : public ISessionAgent {
 public:
     explicit SuperMarioSessionAgent(int fd);
 
-    int fd() const noexcept;
-    int playerId() const noexcept;
-    bool closing() const noexcept;
+    int fd() const noexcept override;
+    int playerId() const noexcept override;
+    bool closing() const noexcept override;
 
-    std::vector<GameCommand> onSocketData(std::string_view chunk);
-    std::string acceptJoin(int playerId, std::string snapshot);
-    DisconnectPlan beginDisconnect() noexcept;
-    ResponsePlan onWorldResponse(const GameResponse& response) noexcept;
-    GameCommand makeJoinCommand() const;
-    GameCommand makeLeaveCommand() const;
+    SessionActions onAccept() override;
+    SessionActions onSocketData(std::string_view chunk) override;
+    SessionActions onDisconnect() noexcept override;
+    SessionActions onWorldResponse(const GameResponse& response) noexcept override;
+    SessionActions onLoginResponse(const LoginMessage& response) noexcept override;
 
 private:
-    static std::string ensureNewline(std::string data);
     static std::string trimLine(std::string line);
+    static std::vector<std::string> splitWords(std::string_view line);
+    SkynetMessage makeJoinMessage() const;
+    SkynetMessage makeLeaveMessage() const;
+    SkynetMessage makeLoginRequest(std::string username, std::string password) const;
 
     int fd_ = -1;
     int playerId_ = 0;
     bool closing_ = false;
+    bool authenticated_ = false;
+    bool loginPending_ = false;
+    std::string username_;
     std::string input_;
 };
 

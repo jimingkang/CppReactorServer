@@ -31,8 +31,12 @@
 add_executable(supermario_server_workers
         ../worker_main.cpp
         ../worker_server.cpp
+        ../service_context.cpp
+        ../service_runtime_contexts.cpp
+        ../session_service_context.cpp
         ../socket_utils.cpp
         ../game_world.cpp
+        super_mario_server_binding.cpp
         super_mario_game_world.cpp
         super_mario_session_agent.cpp
         ecs_poc.cpp

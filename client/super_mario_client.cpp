@@ -74,7 +74,7 @@ public:
         disconnect();
     }
 
-    bool connectTo(const std::string& host, int port) {
+    bool connectTo(const std::string& host, int port, const std::string& username, const std::string& password) {
         disconnect();
         socketFd_ = socket(AF_INET, SOCK_STREAM, 0);
         if (socketFd_ < 0) {
@@ -104,9 +104,10 @@ public:
 
         setNonBlocking(socketFd_);
         connected_ = true;
+        authenticated_ = false;
+        loginName_ = username;
         status_ = "connected";
-        sendLine("HELP");
-        sendLine("STATE");
+        sendLine("LOGIN " + username + " " + password);
         return true;
     }
 
@@ -117,6 +118,7 @@ public:
         socketFd_ = -1;
         connected_ = false;
         playerId_ = 0;
+        authenticated_ = false;
         inbox_.clear();
         partial_.clear();
         players_.clear();
@@ -130,6 +132,10 @@ public:
 
     int playerId() const {
         return playerId_;
+    }
+
+    bool authenticated() const {
+        return authenticated_;
     }
 
     const std::string& status() const {
@@ -236,6 +242,21 @@ private:
 
         if (line.rfind("WELCOME player=", 0) == 0) {
             playerId_ = std::atoi(line.c_str() + 15);
+            authenticated_ = true;
+            status_ = "authenticated";
+            return;
+        }
+
+        if (line.rfind("OK LOGIN user=", 0) == 0) {
+            authenticated_ = true;
+            loginName_ = line.substr(14);
+            status_ = "login ok";
+            return;
+        }
+
+        if (line.rfind("ERR login_", 0) == 0 || line == "ERR login_required" || line == "ERR login_pending") {
+            authenticated_ = false;
+            status_ = line;
             return;
         }
 
@@ -322,8 +343,10 @@ private:
 
     int socketFd_ = -1;
     bool connected_ = false;
+    bool authenticated_ = false;
     int playerId_ = 0;
     std::string status_ = "disconnected";
+    std::string loginName_;
     std::string partial_;
     std::string outbox_;
     std::vector<std::string> inbox_;
@@ -671,6 +694,7 @@ private:
     float cameraX_ = 0.0f;
     float sendTimer_ = 0.0f;
     float stateTimer_ = 0.0f;
+    int inputSeq_ = 1;
     std::vector<Platform> platforms_ = {
         {0.0f, 430.0f, 2400.0f, 90.0f}, {260.0f, 340.0f, 150.0f, 28.0f}, {540.0f, 300.0f, 170.0f, 28.0f},
         {850.0f, 360.0f, 150.0f, 28.0f}, {1180.0f, 315.0f, 180.0f, 28.0f}, {1500.0f, 355.0f, 220.0f, 28.0f},
@@ -726,7 +750,9 @@ int main() {
     NetworkClient network;
     SuperMarioNetGame game;
     char host[64] = "127.0.0.1";
-    int port = 7777;
+    int port = 7779;
+    char username[64] = "mario";
+    char password[64] = "mushroom";
     double lastTime = glfwGetTime();
 
     while (!glfwWindowShouldClose(window)) {
@@ -764,9 +790,11 @@ int main() {
         ImGui::Separator();
         ImGui::InputText("Host", host, sizeof(host));
         ImGui::InputInt("Port", &port);
+        ImGui::InputText("User", username, sizeof(username));
+        ImGui::InputText("Pass", password, sizeof(password), ImGuiInputTextFlags_Password);
         if (!network.connected()) {
             if (ImGui::Button("Connect", {110.0f, 32.0f})) {
-                network.connectTo(host, port);
+                network.connectTo(host, port, username, password);
             }
         } else {
             if (ImGui::Button("Disconnect", {110.0f, 32.0f})) {
@@ -782,6 +810,7 @@ int main() {
         ImGui::Spacing();
         ImGui::TextWrapped("Status: %s", network.status().c_str());
         ImGui::Text("Local player id: %d", network.playerId());
+        ImGui::Text("Authenticated: %s", network.authenticated() ? "yes" : "no");
         ImGui::Text("HP: %d", game.hp());
         ImGui::Text("Coins: %d/%d", game.collectedCoins(), game.totalCoins());
         ImGui::Text("Local score: %d", game.localScore());

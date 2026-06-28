@@ -9,7 +9,8 @@ enum class ServiceId : std::uint32_t {
     Connection = 3,
     GameWorld = 4,
     Room = 5,
-    Db = 6,
+    Login = 6,
+    Db = 7,
 };
 
 enum class SocketMessageType {
@@ -64,17 +65,50 @@ struct RoomMessage {
 
 enum class DbMessageType {
     SavePlayer,
+    CheckCredentials,
+    CredentialsResult,
 };
 
 struct DbMessage {
     DbMessageType type = DbMessageType::SavePlayer;
     int playerId = 0;
+    int fd = -1;
+    std::string username;
+    std::string password;
+    bool success = false;
+    std::string reason;
+};
+
+enum class LoginMessageType {
+    Request,
+    Result,
+};
+
+struct LoginMessage {
+    LoginMessageType type = LoginMessageType::Request;
+    int fd = -1;
+    std::string username;
+    std::string password;
+    bool success = false;
+    std::string reason;
+};
+
+enum class SocketCommandType {
+    Send,
+    Close,
+};
+
+struct SocketCommand {
+    SocketCommandType type = SocketCommandType::Send;
+    int fd = -1;
+    std::string data;
 };
 
 enum class MessageKind {
     Socket,
     GameCommand,
     GameResponse,
+    Login,
     Log,
     Room,
     Db,
@@ -88,6 +122,7 @@ struct SkynetMessage {
     SocketMessage socket;
     GameCommand gameCommand;
     GameResponse gameResponse;
+    LoginMessage login;
     RoomMessage room;
     DbMessage db;
     std::string text;

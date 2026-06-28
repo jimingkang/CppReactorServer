@@ -1,18 +1,14 @@
 #pragma once
 
-#include "i_game_world.h"
-
 #include <string>
 
-class GameWorld : public IGameWorld {
+class IGameWorld {
 public:
-    virtual ~GameWorld() = default;
+    virtual ~IGameWorld() = default;
 
     virtual int join() = 0;
     virtual std::string leave(int playerId) = 0;
     virtual std::string handleCommand(int playerId, const std::string& commandLine) = 0;
     virtual std::string snapshot() const = 0;
-
-    // Optional per-frame tick (ms). Default no-op so existing worlds remain compatible.
     virtual void tick(int /*ms*/) {}
 };

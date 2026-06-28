@@ -1,8 +1,10 @@
 #pragma once
 
+#include "i_game_server_binding.h"
+#include "service_context.h"
+#include "service_runtime_contexts.h"
+#include "session_service_context.h"
 #include "worker_protocol.h"
-#include "supermario/super_mario_game_world.h"
-#include "supermario/super_mario_session_agent.h"
 
 #include <atomic>
 #include <condition_variable>
@@ -15,45 +17,31 @@
 #include <unordered_map>
 #include <vector>
 
-class ServiceQueue {
-public:
-    explicit ServiceQueue(ServiceId id);
-
-    ServiceId id() const noexcept;
-    bool push(SkynetMessage message);
-    bool popOne(SkynetMessage& message);
-    bool finishBatch();
-
-private:
-    ServiceId id_;
-    std::mutex mutex_;
-    std::queue<SkynetMessage> queue_;
-    bool scheduled_ = false;
-};
-
-enum class SocketCommandType {
-    Send,
-    Close,
-};
-
-struct SocketCommand {
-    SocketCommandType type = SocketCommandType::Send;
-    int fd = -1;
-    std::string data;
-};
-
 class WorkerGameServer {
 public:
-    WorkerGameServer(std::string host, int port, std::size_t workerCount);
+    WorkerGameServer(std::string host, int port, std::size_t workerCount, std::unique_ptr<IGameServerBinding> binding);
     ~WorkerGameServer();
 
     WorkerGameServer(const WorkerGameServer&) = delete;
     WorkerGameServer& operator=(const WorkerGameServer&) = delete;
 
+    void applySessionActions(const SessionActions& actions);
+    void removeSessionContext(int fd);
+    void sendToService(ServiceId destination, SkynetMessage message);
+    void logText(std::string text);
+
     void run();
     void stop();
 
 private:
+    friend class GateServiceContext;
+    friend class ConnectionServiceContext;
+    friend class GameWorldServiceContext;
+    friend class LoggerServiceContext;
+    friend class LoginServiceContext;
+    friend class DbServiceContext;
+    friend class RoomServiceContext;
+
     struct ClientSocket {
         std::string output;
         bool closing = false;
@@ -62,18 +50,15 @@ private:
     void socketLoop();
     void workerLoop(std::size_t workerId);
 
-    void sendToService(ServiceId destination, SkynetMessage message);
-    ServiceQueue* waitReadyService();
-    void rescheduleService(ServiceQueue& queue);
-    ServiceQueue& serviceQueue(ServiceId id);
-
-    void dispatchMessage(const SkynetMessage& message);
-    void handleLoggerService(const SkynetMessage& message);
     void handleGateService(const SkynetMessage& message);
     void handleConnectionService(const SkynetMessage& message);
     void handleGameWorldService(const SkynetMessage& message);
-    void handleRoomService(const SkynetMessage& message);
-    void handleDbService(const SkynetMessage& message);
+    void sendToContext(ServiceContext& context, SkynetMessage message);
+    ServiceContext* waitReadyService();
+    void rescheduleService(ServiceContext& context);
+    bool collectFinishedSession(ServiceContext& context);
+    ServiceContext& serviceContext(ServiceId id);
+    SessionServiceContext* sessionContext(int fd);
 
     void queueSocketMessage(SocketMessage message);
     void queueSocketCommand(SocketCommand command);
@@ -99,10 +84,10 @@ private:
     int wakeReadFd_ = -1;
     int wakeWriteFd_ = -1;
 
-    std::vector<std::unique_ptr<ServiceQueue>> services_;
+    std::vector<std::unique_ptr<ServiceContext>> services_;
     std::mutex globalMutex_;
     std::condition_variable globalReady_;
-    std::queue<ServiceQueue*> globalQueue_;
+    std::queue<ServiceContext*> globalQueue_;
     bool servicesStopped_ = false;
     std::vector<std::thread> workers_;
     std::thread tickThread_;
@@ -111,6 +96,7 @@ private:
     std::queue<SocketCommand> socketCommands_;
     std::unordered_map<int, ClientSocket> sockets_;
 
-    supermario::SuperMarioGameWorld world_;
-    std::unordered_map<int, supermario::SuperMarioSessionAgent> sessions_;
+    std::unique_ptr<IGameServerBinding> binding_;
+    std::unique_ptr<IGameWorld> world_;
+    std::unordered_map<int, std::unique_ptr<SessionServiceContext>> sessions_;
 };
