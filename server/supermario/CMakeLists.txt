@@ -33,6 +33,7 @@ add_executable(supermario_server_workers
         ../worker_server.cpp
         ../service_context.cpp
         ../service_runtime_contexts.cpp
+        ../request_reply_service_context.cpp
         ../session_service_context.cpp
         ../socket_utils.cpp
         ../game_world.cpp

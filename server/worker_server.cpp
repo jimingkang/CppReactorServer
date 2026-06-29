@@ -457,6 +457,7 @@ void WorkerGameServer::handleGameWorldService(const SkynetMessage& message) {
     SkynetMessage outbound;
     outbound.source = ServiceId::GameWorld;
     outbound.kind = MessageKind::GameResponse;
+    outbound.replyTo = message.requestId;
     outbound.gameResponse = std::move(response);
     sendToService(ServiceId::Connection, std::move(outbound));
 }

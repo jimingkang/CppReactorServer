@@ -118,6 +118,8 @@ struct SkynetMessage {
     ServiceId source = ServiceId::Gate;
     ServiceId destination = ServiceId::Gate;
     int session = 0;
+    std::uint64_t requestId = 0;
+    std::uint64_t replyTo = 0;
     MessageKind kind = MessageKind::Socket;
     SocketMessage socket;
     GameCommand gameCommand;
