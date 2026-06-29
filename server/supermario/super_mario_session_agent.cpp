@@ -75,8 +75,12 @@ SessionActions SuperMarioSessionAgent::onSocketData(std::string_view chunk) {
                 continue;
             }
             if (command == "QUIT") {
+                actions.socketCommands.push_back(SocketCommand{
+                    SocketCommandType::Send,
+                    fd_,
+                    "BYE player=0\n"
+                });
                 actions.socketCommands.push_back(SocketCommand{SocketCommandType::Close, fd_, {}});
-                actions.eraseSession = true;
                 closing_ = true;
                 continue;
             }
@@ -112,7 +116,7 @@ SessionActions SuperMarioSessionAgent::onSocketData(std::string_view chunk) {
         if (!line.empty()) {
             actions.serviceMessages.push_back(wrapGameMessage(
                 ServiceId::GameWorld,
-                GameCommand{GameCommandType::Command, fd_, playerId_, std::move(line)}));
+                GameCommand{GameCommandType::Command, fd_, playerId_, 0, std::move(line)}));
         }
     }
     return actions;
@@ -130,6 +134,9 @@ SessionActions SuperMarioSessionAgent::onDisconnect() noexcept {
     actions.socketCommands.push_back(SocketCommand{SocketCommandType::Close, fd_, {}});
 
     if (closing_) {
+        if (playerId_ == 0) {
+            actions.eraseSession = true;
+        }
         return actions;
     }
 
@@ -198,12 +205,17 @@ SessionActions SuperMarioSessionAgent::onLoginResponse(const LoginMessage& respo
     return actions;
 }
 
+SessionActions SuperMarioSessionAgent::onHallResponse(const HallMessage& response) noexcept {
+    (void)response;
+    return {};
+}
+
 SkynetMessage SuperMarioSessionAgent::makeJoinMessage() const {
-    return wrapGameMessage(ServiceId::GameWorld, GameCommand{GameCommandType::Join, fd_, 0, {}});
+    return wrapGameMessage(ServiceId::GameWorld, GameCommand{GameCommandType::Join, fd_, 0, 0, {}});
 }
 
 SkynetMessage SuperMarioSessionAgent::makeLeaveMessage() const {
-    return wrapGameMessage(ServiceId::GameWorld, GameCommand{GameCommandType::Leave, fd_, playerId_, {}});
+    return wrapGameMessage(ServiceId::GameWorld, GameCommand{GameCommandType::Leave, fd_, playerId_, 0, {}});
 }
 
 SkynetMessage SuperMarioSessionAgent::makeLoginRequest(std::string username, std::string password) const {

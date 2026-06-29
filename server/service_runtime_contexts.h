@@ -6,6 +6,7 @@
 
 #include <coroutine>
 #include <deque>
+#include <map>
 #include <memory>
 #include <unordered_map>
 #include <vector>
@@ -107,6 +108,43 @@ protected:
     Task mainLoop() override;
 };
 
+class HallServiceContext final : public RequestReplyServiceContext {
+public:
+    HallServiceContext();
+
+    struct HallRoom {
+        int roomId = 0;
+        int ownerPlayerId = 0;
+        int seatCount = 2;
+        std::string gameType;
+        std::string roomName;
+        std::vector<int> playerIds;
+    };
+
+protected:
+    Task mainLoop() override;
+
+private:
+    struct PendingMatch {
+        int fd = -1;
+        int playerId = 0;
+        int seatCount = 3;
+        std::string gameType;
+        std::string roomName;
+        ServiceId replyService = ServiceId::Connection;
+        std::uint64_t replyTo = 0;
+    };
+
+    using MatchKey = std::pair<std::string, int>;
+
+    void replyMatchResult(const PendingMatch& pending, const HallRoom& room);
+    void tryBuildMatch(const MatchKey& key);
+
+    int nextRoomId_ = 1;
+    std::unordered_map<int, HallRoom> rooms_;
+    std::map<MatchKey, std::deque<PendingMatch>> pendingMatches_;
+};
+
 class LoginServiceContext final : public RequestReplyServiceContext {
 public:
     LoginServiceContext();
@@ -124,4 +162,15 @@ protected:
 
 private:
     std::unordered_map<std::string, std::string> userCredentials_;
+};
+
+class RedisServiceContext final : public CoroutineServiceContext {
+public:
+    RedisServiceContext();
+
+protected:
+    Task mainLoop() override;
+
+private:
+    std::unordered_map<std::string, std::string> keyValues_;
 };

@@ -4,13 +4,12 @@
 
 #include <string>
 #include <string_view>
-#include <vector>
 
-namespace supermario {
+namespace guessnumber {
 
-class SuperMarioSessionAgent final : public ISessionAgent {
+class GuessNumberSessionAgent final : public ISessionAgent {
 public:
-    explicit SuperMarioSessionAgent(int fd);
+    explicit GuessNumberSessionAgent(int fd);
 
     int fd() const noexcept override;
     int playerId() const noexcept override;
@@ -25,18 +24,21 @@ public:
 
 private:
     static std::string trimLine(std::string line);
-    static std::vector<std::string> splitWords(std::string_view line);
-    SkynetMessage makeJoinMessage() const;
-    SkynetMessage makeLeaveMessage() const;
-    SkynetMessage makeLoginRequest(std::string username, std::string password) const;
+    static std::string upperFirst(std::string line);
+    SkynetMessage makeAutoMatchMessage() const;
+    SkynetMessage makeCancelMatchMessage() const;
+    SkynetMessage makeJoinWorldMessage() const;
+    SkynetMessage makeLeaveWorldMessage() const;
+    SkynetMessage makeWorldCommand(std::string line) const;
 
     int fd_ = -1;
     int playerId_ = 0;
+    int roomId_ = 0;
     bool closing_ = false;
-    bool authenticated_ = false;
-    bool loginPending_ = false;
-    std::string username_;
+    bool waitingMatch_ = false;
+    bool joinedRoom_ = false;
+    bool quitPending_ = false;
     std::string input_;
 };
 
-} // namespace supermario
+} // namespace guessnumber

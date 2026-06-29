@@ -190,6 +190,7 @@ bool RequestReplyServiceContext::ServiceCallAwaiter::await_ready() const noexcep
 
 bool RequestReplyServiceContext::ServiceCallAwaiter::await_suspend(std::coroutine_handle<> handle) {
     requestId = owner.nextRequestId_++;
+    request.source = owner.id();
     request.requestId = requestId;
     request.replyTo = 0;
     owner.awaitingResponse_ = true;

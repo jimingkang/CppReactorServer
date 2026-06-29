@@ -60,7 +60,7 @@ WorkerGameServer::WorkerGameServer(std::string host, int port, std::size_t worke
         throw std::invalid_argument("WorkerGameServer binding returned null world");
     }
 
-    services_.reserve(7);
+    services_.reserve(9);
     services_.push_back(std::make_unique<LoggerServiceContext>());
     services_.push_back(std::make_unique<GateServiceContext>());
     services_.push_back(std::make_unique<ConnectionServiceContext>());
@@ -68,6 +68,8 @@ WorkerGameServer::WorkerGameServer(std::string host, int port, std::size_t worke
     services_.push_back(std::make_unique<RoomServiceContext>());
     services_.push_back(std::make_unique<LoginServiceContext>());
     services_.push_back(std::make_unique<DbServiceContext>(binding_->seedUsers()));
+    services_.push_back(std::make_unique<HallServiceContext>());
+    services_.push_back(std::make_unique<RedisServiceContext>());
 }
 
 WorkerGameServer::~WorkerGameServer() {
@@ -126,7 +128,7 @@ void WorkerGameServer::run() {
     });
 
     std::cout << "worker_game_server listening on " << host_ << ':' << port_
-              << " workers=" << workerCount_ << " services=logger,gate,connection,gameworld,room,login,db\n";
+              << " workers=" << workerCount_ << " services=logger,gate,connection,gameworld,room,login,db,hall,redis\n";
     socketLoop();
 }
 
@@ -391,6 +393,16 @@ void WorkerGameServer::handleConnectionService(const SkynetMessage& message) {
         return;
     }
 
+    if (message.kind == MessageKind::Hall) {
+        const HallMessage& response = message.hall;
+        auto* ctx = sessionContext(response.fd);
+        if (ctx == nullptr) {
+            return;
+        }
+        sendToContext(*ctx, message);
+        return;
+    }
+
     if (message.kind != MessageKind::GameResponse) {
         return;
     }
@@ -409,25 +421,24 @@ void WorkerGameServer::handleGameWorldService(const SkynetMessage& message) {
     }
 
     const GameCommand& command = message.gameCommand;
-    GameResponse response;
-    response.fd = command.fd;
-
     if (command.type == GameCommandType::Join) {
-        const int playerId = world_->join();
-        response.type = GameResponseType::Joined;
-        response.playerId = playerId;
-        response.text += world_->snapshot();
+        GameResponse response = world_->join(command);
+        if (response.playerId > 0) {
+            SkynetMessage room;
+            room.source = ServiceId::GameWorld;
+            room.kind = MessageKind::Room;
+            room.room = RoomMessage{RoomMessageType::PlayerJoined, response.playerId};
+            sendToService(ServiceId::Room, std::move(room));
+        }
 
-        SkynetMessage room;
-        room.source = ServiceId::GameWorld;
-        room.kind = MessageKind::Room;
-        room.room = RoomMessage{RoomMessageType::PlayerJoined, playerId};
-        sendToService(ServiceId::Room, std::move(room));
+        SkynetMessage outbound;
+        outbound.source = ServiceId::GameWorld;
+        outbound.kind = MessageKind::GameResponse;
+        outbound.replyTo = message.requestId;
+        outbound.gameResponse = std::move(response);
+        sendToService(ServiceId::Connection, std::move(outbound));
     } else if (command.type == GameCommandType::Leave) {
-        response.type = GameResponseType::LeaveAck;
-        response.playerId = command.playerId;
-        response.text = world_->leave(command.playerId);
-        response.closeAfterSend = true;
+        GameResponse response = world_->leave(command);
 
         SkynetMessage room;
         room.source = ServiceId::GameWorld;
@@ -440,26 +451,43 @@ void WorkerGameServer::handleGameWorldService(const SkynetMessage& message) {
         db.kind = MessageKind::Db;
         db.db = DbMessage{DbMessageType::SavePlayer, command.playerId};
         sendToService(ServiceId::Db, std::move(db));
+
+        SkynetMessage outbound;
+        outbound.source = ServiceId::GameWorld;
+        outbound.kind = MessageKind::GameResponse;
+        outbound.replyTo = message.requestId;
+        outbound.gameResponse = std::move(response);
+        sendToService(ServiceId::Connection, std::move(outbound));
     } else {
-        std::string result = world_->handleCommand(command.playerId, command.line);
-        if (result == "QUIT\n") {
-            response.type = GameResponseType::LeaveAck;
-            response.playerId = command.playerId;
-            response.text = world_->leave(command.playerId);
-            response.closeAfterSend = true;
-        } else {
-            response.type = GameResponseType::Text;
-            response.playerId = command.playerId;
-            response.text = std::move(result);
+        GameResponse response = world_->handleCommand(command);
+        if (response.type == GameResponseType::LeaveAck) {
+            SkynetMessage room;
+            room.source = ServiceId::GameWorld;
+            room.kind = MessageKind::Room;
+            room.room = RoomMessage{RoomMessageType::PlayerLeft, command.playerId};
+            sendToService(ServiceId::Room, std::move(room));
+
+            SkynetMessage db;
+            db.source = ServiceId::GameWorld;
+            db.kind = MessageKind::Db;
+            db.db = DbMessage{DbMessageType::SavePlayer, command.playerId};
+            sendToService(ServiceId::Db, std::move(db));
         }
+        SkynetMessage outbound;
+        outbound.source = ServiceId::GameWorld;
+        outbound.kind = MessageKind::GameResponse;
+        outbound.replyTo = message.requestId;
+        outbound.gameResponse = std::move(response);
+        sendToService(ServiceId::Connection, std::move(outbound));
     }
 
-    SkynetMessage outbound;
-    outbound.source = ServiceId::GameWorld;
-    outbound.kind = MessageKind::GameResponse;
-    outbound.replyTo = message.requestId;
-    outbound.gameResponse = std::move(response);
-    sendToService(ServiceId::Connection, std::move(outbound));
+    for (GameResponse pending : world_->takePendingResponses()) {
+        SkynetMessage broadcast;
+        broadcast.source = ServiceId::GameWorld;
+        broadcast.kind = MessageKind::GameResponse;
+        broadcast.gameResponse = std::move(pending);
+        sendToService(ServiceId::Connection, std::move(broadcast));
+    }
 }
 
 void WorkerGameServer::queueSocketMessage(SocketMessage message) {

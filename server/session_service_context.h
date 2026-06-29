@@ -20,6 +20,7 @@ private:
     enum class SessionCallKind {
         None,
         Login,
+        Hall,
         World,
     };
 
@@ -30,6 +31,7 @@ private:
     void processActions(const SessionActions& actions);
 
     static bool isLoginCallMessage(const SkynetMessage& message);
+    static bool isHallCallMessage(const SkynetMessage& message);
     static bool isWorldCallMessage(const SkynetMessage& message);
     static SessionActions withoutSessionCall(SessionActions actions, std::optional<SkynetMessage>& callMessage, SessionCallKind& callKind);
 

@@ -19,39 +19,66 @@ std::string firstToken(const std::string& line) {
 
 } // namespace
 
-int SuperMarioGameWorld::join() {
+GameResponse SuperMarioGameWorld::join(const GameCommand& command) {
     const int playerId = nextPlayerId_++;
     ecs_.createPlayer(playerId);
-    return playerId;
+    GameResponse response;
+    response.type = GameResponseType::Joined;
+    response.fd = command.fd;
+    response.playerId = playerId;
+    response.roomId = command.roomId;
+    response.text = snapshot();
+    return response;
 }
 
-std::string SuperMarioGameWorld::leave(int playerId) {
-    ecs_.destroyPlayer(playerId);
-    return "BYE player=" + std::to_string(playerId) + "\n";
+GameResponse SuperMarioGameWorld::leave(const GameCommand& command) {
+    ecs_.destroyPlayer(command.playerId);
+    GameResponse response;
+    response.type = GameResponseType::LeaveAck;
+    response.fd = command.fd;
+    response.playerId = command.playerId;
+    response.roomId = command.roomId;
+    response.text = "BYE player=" + std::to_string(command.playerId) + "\n";
+    response.closeAfterSend = true;
+    return response;
 }
 
-std::string SuperMarioGameWorld::handleCommand(int playerId, const std::string& commandLine) {
+GameResponse SuperMarioGameWorld::handleCommand(const GameCommand& commandData) {
+    const int playerId = commandData.playerId;
+    const std::string& commandLine = commandData.line;
     const std::string command = commandName(commandLine);
+    GameResponse response;
+    response.type = GameResponseType::Text;
+    response.fd = commandData.fd;
+    response.playerId = playerId;
+    response.roomId = commandData.roomId;
 
     if (command == "PING") {
-        return "PONG\n";
+        response.text = "PONG\n";
+        return response;
     }
 
     if (command == "HELP") {
-        return "COMMANDS POS x y | MOVE dx dy | ATTACK playerId | COIN coinId | STATE | PING | QUIT\n";
+        response.text = "COMMANDS POS x y | MOVE dx dy | ATTACK playerId | COIN coinId | STATE | PING | QUIT\n";
+        return response;
     }
 
     if (command == "QUIT") {
-        return "QUIT\n";
+        response.type = GameResponseType::LeaveAck;
+        response.text = leave(commandData).text;
+        response.closeAfterSend = true;
+        return response;
     }
 
     if (command == "STATE") {
-        return snapshot();
+        response.text = snapshot();
+        return response;
     }
 
     Player* player = find(playerId);
     if (player == nullptr) {
-        return "ERR player_not_found\n";
+        response.text = "ERR player_not_found\n";
+        return response;
     }
 
     std::istringstream input(commandLine);
@@ -71,8 +98,9 @@ std::string SuperMarioGameWorld::handleCommand(int playerId, const std::string& 
             std::lock_guard lock(inputMutex_);
             inputQueue_.emplace(playerId, pi);
         }
-        return "OK MOVE queued player=" + std::to_string(playerId) + " dx=" + std::to_string(dx) +
-               " dy=" + std::to_string(dy) + "\n";
+        response.text = "OK MOVE queued player=" + std::to_string(playerId) + " dx=" + std::to_string(dx) +
+                        " dy=" + std::to_string(dy) + "\n";
+        return response;
     }
 
     if (command == "POS") {
@@ -87,8 +115,9 @@ std::string SuperMarioGameWorld::handleCommand(int playerId, const std::string& 
             std::lock_guard lock(inputMutex_);
             inputQueue_.emplace(playerId, pi);
         }
-        return "OK POS queued player=" + std::to_string(playerId) + " x=" + std::to_string(x) +
-               " y=" + std::to_string(y) + "\n";
+        response.text = "OK POS queued player=" + std::to_string(playerId) + " x=" + std::to_string(x) +
+                        " y=" + std::to_string(y) + "\n";
+        return response;
     }
 
     if (command == "INPUT") {
@@ -104,7 +133,8 @@ std::string SuperMarioGameWorld::handleCommand(int playerId, const std::string& 
             std::lock_guard lock(inputMutex_);
             inputQueue_.emplace(playerId, pi);
         }
-        return "OK INPUT queued seq=" + std::to_string(seq) + " vx=" + std::to_string(vx) + " vy=" + std::to_string(vy) + "\n";
+        response.text = "OK INPUT queued seq=" + std::to_string(seq) + " vx=" + std::to_string(vx) + " vy=" + std::to_string(vy) + "\n";
+        return response;
     }
 
     if (command == "COIN") {
@@ -114,14 +144,17 @@ std::string SuperMarioGameWorld::handleCommand(int playerId, const std::string& 
             return coin.id == coinId;
         });
         if (it == coins_.end()) {
-            return "ERR coin_not_found\n";
+            response.text = "ERR coin_not_found\n";
+            return response;
         }
         if (it->collected) {
-            return "ERR coin_already_collected\n";
+            response.text = "ERR coin_already_collected\n";
+            return response;
         }
         it->collected = true;
         player->score += 10;
-        return "OK COIN id=" + std::to_string(coinId) + " score=" + std::to_string(player->score) + "\n";
+        response.text = "OK COIN id=" + std::to_string(coinId) + " score=" + std::to_string(player->score) + "\n";
+        return response;
     }
 
     if (command == "ATTACK") {
@@ -129,14 +162,17 @@ std::string SuperMarioGameWorld::handleCommand(int playerId, const std::string& 
         input >> targetId;
         Player* target = find(targetId);
         if (target == nullptr) {
-            return "ERR target_not_found\n";
+            response.text = "ERR target_not_found\n";
+            return response;
         }
         target->hp = std::max(0, target->hp - 10);
         player->score += 5;
-        return "OK ATTACK target=" + std::to_string(targetId) + " hp=" + std::to_string(target->hp) + "\n";
+        response.text = "OK ATTACK target=" + std::to_string(targetId) + " hp=" + std::to_string(target->hp) + "\n";
+        return response;
     }
 
-    return "ERR unknown_command. Try HELP\n";
+    response.text = "ERR unknown_command. Try HELP\n";
+    return response;
 }
 
 std::string SuperMarioGameWorld::snapshot() const {

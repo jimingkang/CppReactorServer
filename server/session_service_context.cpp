@@ -35,6 +35,12 @@ bool SessionServiceContext::isLoginCallMessage(const SkynetMessage& message) {
            message.login.type == LoginMessageType::Request;
 }
 
+bool SessionServiceContext::isHallCallMessage(const SkynetMessage& message) {
+    return message.destination == ServiceId::Hall &&
+           message.kind == MessageKind::Hall &&
+           message.hall.type != HallMessageType::Result;
+}
+
 bool SessionServiceContext::isWorldCallMessage(const SkynetMessage& message) {
     if (message.destination != ServiceId::GameWorld || message.kind != MessageKind::GameCommand) {
         return false;
@@ -53,6 +59,11 @@ SessionActions SessionServiceContext::withoutSessionCall(SessionActions actions,
     for (auto& serviceMessage : actions.serviceMessages) {
         if (!callMessage.has_value() && isLoginCallMessage(serviceMessage)) {
             callKind = SessionCallKind::Login;
+            callMessage = std::move(serviceMessage);
+            continue;
+        }
+        if (!callMessage.has_value() && isHallCallMessage(serviceMessage)) {
+            callKind = SessionCallKind::Hall;
             callMessage = std::move(serviceMessage);
             continue;
         }
@@ -100,6 +111,12 @@ auto SessionServiceContext::mainLoop() -> Task {
             co_await processSessionActions(std::move(actions));
             continue;
         }
+
+        if (message.kind == MessageKind::Hall) {
+            actions = agent_->onHallResponse(message.hall);
+            co_await processSessionActions(std::move(actions));
+            continue;
+        }
     }
 }
 
@@ -117,6 +134,9 @@ auto SessionServiceContext::processSessionActions(SessionActions actions) -> Tas
         switch (callKind) {
         case SessionCallKind::Login:
             actions = agent_->onLoginResponse(response.login);
+            break;
+        case SessionCallKind::Hall:
+            actions = agent_->onHallResponse(response.hall);
             break;
         case SessionCallKind::World:
             actions = agent_->onWorldResponse(response.gameResponse);

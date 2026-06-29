@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <string>
+#include <vector>
 
 enum class ServiceId : std::uint32_t {
     Logger = 1,
@@ -11,6 +12,8 @@ enum class ServiceId : std::uint32_t {
     Room = 5,
     Login = 6,
     Db = 7,
+    Hall = 8,
+    Redis = 9,
 };
 
 enum class SocketMessageType {
@@ -36,6 +39,7 @@ struct GameCommand {
     GameCommandType type = GameCommandType::Command;
     int fd = -1;
     int playerId = 0;
+    int roomId = 0;
     std::string line;
 };
 
@@ -49,6 +53,7 @@ struct GameResponse {
     GameResponseType type = GameResponseType::Text;
     int fd = -1;
     int playerId = 0;
+    int roomId = 0;
     std::string text;
     bool closeAfterSend = false;
 };
@@ -61,6 +66,30 @@ enum class RoomMessageType {
 struct RoomMessage {
     RoomMessageType type = RoomMessageType::PlayerJoined;
     int playerId = 0;
+};
+
+enum class HallMessageType {
+    ListRooms,
+    CreateRoom,
+    AutoMatch,
+    CancelMatch,
+    JoinRoom,
+    LeaveRoom,
+    Result,
+};
+
+struct HallMessage {
+    HallMessageType type = HallMessageType::ListRooms;
+    int fd = -1;
+    int playerId = 0;
+    int roomId = 0;
+    int seatCount = 2;
+    bool success = false;
+    std::string gameType;
+    std::string roomName;
+    std::string reason;
+    std::string payload;
+    std::vector<int> playerIds;
 };
 
 enum class DbMessageType {
@@ -77,6 +106,24 @@ struct DbMessage {
     std::string password;
     bool success = false;
     std::string reason;
+};
+
+enum class RedisMessageType {
+    Get,
+    Set,
+    Delete,
+    KeysByPrefix,
+    Result,
+};
+
+struct RedisMessage {
+    RedisMessageType type = RedisMessageType::Get;
+    std::string key;
+    std::string value;
+    std::string prefix;
+    bool success = false;
+    std::string reason;
+    std::vector<std::string> values;
 };
 
 enum class LoginMessageType {
@@ -112,6 +159,8 @@ enum class MessageKind {
     Log,
     Room,
     Db,
+    Hall,
+    Redis,
 };
 
 struct SkynetMessage {
@@ -127,5 +176,7 @@ struct SkynetMessage {
     LoginMessage login;
     RoomMessage room;
     DbMessage db;
+    HallMessage hall;
+    RedisMessage redis;
     std::string text;
 };

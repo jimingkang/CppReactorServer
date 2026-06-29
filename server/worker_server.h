@@ -41,6 +41,8 @@ private:
     friend class LoginServiceContext;
     friend class DbServiceContext;
     friend class RoomServiceContext;
+    friend class HallServiceContext;
+    friend class RedisServiceContext;
 
     struct ClientSocket {
         std::string output;

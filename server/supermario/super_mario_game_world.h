@@ -16,9 +16,9 @@ namespace supermario {
 
 class SuperMarioGameWorld final : public PlatformGameWorld {
 public:
-    int join() override;
-    std::string leave(int playerId) override;
-    std::string handleCommand(int playerId, const std::string& commandLine) override;
+    GameResponse join(const GameCommand& command) override;
+    GameResponse leave(const GameCommand& command) override;
+    GameResponse handleCommand(const GameCommand& command) override;
     std::string snapshot() const override;
 
     // Advance authoritative simulation by ms milliseconds (called from server tick thread).

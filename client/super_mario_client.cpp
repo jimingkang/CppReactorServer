@@ -105,6 +105,7 @@ public:
         setNonBlocking(socketFd_);
         connected_ = true;
         authenticated_ = false;
+        quitPending_ = false;
         loginName_ = username;
         status_ = "connected";
         sendLine("LOGIN " + username + " " + password);
@@ -119,6 +120,7 @@ public:
         connected_ = false;
         playerId_ = 0;
         authenticated_ = false;
+        quitPending_ = false;
         inbox_.clear();
         partial_.clear();
         players_.clear();
@@ -136,6 +138,10 @@ public:
 
     bool authenticated() const {
         return authenticated_;
+    }
+
+    bool quitPending() const {
+        return quitPending_;
     }
 
     const std::string& status() const {
@@ -167,6 +173,15 @@ public:
             outbox_.push_back('\n');
         }
         flushWrites();
+    }
+
+    void requestQuit() {
+        if (!connected_ || quitPending_) {
+            return;
+        }
+        quitPending_ = true;
+        status_ = "waiting for BYE";
+        sendLine("QUIT");
     }
 
     void poll() {
@@ -243,12 +258,14 @@ private:
         if (line.rfind("WELCOME player=", 0) == 0) {
             playerId_ = std::atoi(line.c_str() + 15);
             authenticated_ = true;
+            quitPending_ = false;
             status_ = "authenticated";
             return;
         }
 
         if (line.rfind("OK LOGIN user=", 0) == 0) {
             authenticated_ = true;
+            quitPending_ = false;
             loginName_ = line.substr(14);
             status_ = "login ok";
             return;
@@ -256,6 +273,13 @@ private:
 
         if (line.rfind("ERR login_", 0) == 0 || line == "ERR login_required" || line == "ERR login_pending") {
             authenticated_ = false;
+            quitPending_ = false;
+            status_ = line;
+            return;
+        }
+
+        if (line.rfind("BYE player=", 0) == 0) {
+            disconnect();
             status_ = line;
             return;
         }
@@ -344,6 +368,7 @@ private:
     int socketFd_ = -1;
     bool connected_ = false;
     bool authenticated_ = false;
+    bool quitPending_ = false;
     int playerId_ = 0;
     std::string status_ = "disconnected";
     std::string loginName_;
@@ -532,8 +557,7 @@ private:
                 if (localScore_ == 0) {
                     gameOver_ = true;
                     if (network.connected()) {
-                        network.sendLine("QUIT");
-                        network.disconnect();
+                        network.requestQuit();
                     }
                 } else {
                     position_.x = std::max(0.0f, position_.x - 80.0f);
@@ -798,8 +822,7 @@ int main() {
             }
         } else {
             if (ImGui::Button("Disconnect", {110.0f, 32.0f})) {
-                network.sendLine("QUIT");
-                network.disconnect();
+                network.requestQuit();
             }
             ImGui::SameLine();
             if (ImGui::Button("State", {80.0f, 32.0f})) {
@@ -811,6 +834,7 @@ int main() {
         ImGui::TextWrapped("Status: %s", network.status().c_str());
         ImGui::Text("Local player id: %d", network.playerId());
         ImGui::Text("Authenticated: %s", network.authenticated() ? "yes" : "no");
+        ImGui::Text("Quit pending: %s", network.quitPending() ? "yes" : "no");
         ImGui::Text("HP: %d", game.hp());
         ImGui::Text("Coins: %d/%d", game.collectedCoins(), game.totalCoins());
         ImGui::Text("Local score: %d", game.localScore());
