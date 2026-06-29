@@ -58,6 +58,7 @@ if (BUILD_IMGUI_CLIENT)
     add_executable(game2048_client client/2048/2048_client.cpp)
     target_link_libraries(game2048_client PRIVATE imgui glfw OpenGL::GL)
 
+
     if (APPLE)
         #target_compile_definitions(cppImgui PRIVATE GL_SILENCE_DEPRECATION)
         target_compile_definitions(super_mario_client PRIVATE GL_SILENCE_DEPRECATION)
@@ -70,6 +71,7 @@ target_compile_features(stress_client PRIVATE cxx_std_20)
 
 if (BUILD_GAME_SERVER AND (CMAKE_SYSTEM_NAME STREQUAL "Linux" OR APPLE))
     add_subdirectory(server/supermario)
+    add_subdirectory(server/guessnumber)
     add_subdirectory(server/2048)
 else ()
     message(STATUS "Skipping supermario_server: reactor backend requires Linux epoll or macOS/BSD kqueue.")
