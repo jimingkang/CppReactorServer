@@ -34,6 +34,7 @@ PlayerInfo* GuessNumberRoomManager::createPlayer(int playerId, int fd) {
     auto& player = players_[playerId];
     player.playerId = playerId;
     player.fd = fd;
+    player.lastSeen = std::chrono::steady_clock::now();
     return &player;
 }
 
@@ -234,6 +235,31 @@ void GuessNumberRoomManager::removeExpiredRooms(int timeoutSeconds) {
     
     for (int roomId : toRemove) {
         rooms_.erase(roomId);
+    }
+}
+
+PlayerInfo* GuessNumberRoomManager::findDisconnectedPlayer(int playerId) {
+    auto* player = getPlayer(playerId);
+    if (player != nullptr && player->disconnected) {
+        return player;
+    }
+    return nullptr;
+}
+
+void GuessNumberRoomManager::markPlayerDisconnected(int playerId) {
+    auto* player = getPlayer(playerId);
+    if (player != nullptr) {
+        player->disconnected = true;
+        player->lastSeen = std::chrono::steady_clock::now();
+    }
+}
+
+void GuessNumberRoomManager::reconnectPlayer(int playerId, int newFd) {
+    auto* player = getPlayer(playerId);
+    if (player != nullptr) {
+        player->fd = newFd;
+        player->disconnected = false;
+        player->lastSeen = std::chrono::steady_clock::now();
     }
 }
 

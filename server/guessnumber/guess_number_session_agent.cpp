@@ -187,6 +187,40 @@ SessionActions GuessNumberSessionAgent::onHallResponse(const HallMessage& respon
     return actions;
 }
 
+SessionActions GuessNumberSessionAgent::onReconnect(int newFd) {
+    SessionActions actions;
+    fd_ = newFd;
+    
+    if (joinedRoom_) {
+        // 重新加入房间
+        actions.socketCommands.push_back(SocketCommand{
+            SocketCommandType::Send,
+            fd_,
+            "RECONNECTED room=" + std::to_string(roomId_) +
+            " player=" + std::to_string(playerId_) + "\n"
+        });
+        actions.serviceMessages.push_back(makeJoinWorldMessage());
+    } else if (waitingMatch_) {
+        // 继续等待匹配
+        actions.socketCommands.push_back(SocketCommand{
+            SocketCommandType::Send,
+            fd_,
+            "WAITING match_resumed\n"
+        });
+    } else {
+        // 开始新的匹配
+        actions.socketCommands.push_back(SocketCommand{
+            SocketCommandType::Send,
+            fd_,
+            "RECONNECTED new_session\n"
+        });
+        waitingMatch_ = true;
+        actions.serviceMessages.push_back(makeAutoMatchMessage());
+    }
+    
+    return actions;
+}
+
 std::string GuessNumberSessionAgent::trimLine(std::string line) {
     while (!line.empty() && (line.back() == '\n' || line.back() == '\r')) {
         line.pop_back();

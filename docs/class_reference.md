@@ -12,8 +12,9 @@ supermario_server_workers
     -> SocketMessage
     -> GateService queue
     -> ConnectionService queue
-    -> GameWorldService queue
-    -> ConnectionService queue
+    -> SessionServiceContext(fd)
+    -> Login/Hall/GameWorld/Db/Redis services
+    -> SessionServiceContext(fd)
     -> SocketCommand queue
     -> SocketLoop send/close
 
@@ -292,7 +293,7 @@ Responsibilities:
 
 ### `ServiceId`
 
-Defined in `server/worker_server.h`.
+Defined in `server/worker_protocol.h`.
 
 Identifies logical services:
 
@@ -301,14 +302,17 @@ Identifies logical services:
 - `Connection`
 - `GameWorld`
 - `Room`
+- `Login`
 - `Db`
+- `Hall`
+- `Redis`
 
 Workers are not tied to a service. They pull ready service queues from a global
 queue.
 
 ### `SocketMessageType`
 
-Defined in `server/worker_server.h`.
+Defined in `server/worker_protocol.h`.
 
 Represents socket events emitted by the socket loop:
 
@@ -319,7 +323,7 @@ Represents socket events emitted by the socket loop:
 
 ### `SocketMessage`
 
-Defined in `server/worker_server.h`.
+Defined in `server/worker_protocol.h`.
 
 Message produced from fd events.
 
@@ -331,7 +335,7 @@ Fields:
 
 ### `GameCommandType` and `GameCommand`
 
-Defined in `server/worker_server.h`.
+Defined in `server/worker_protocol.h`.
 
 Command sent from `ConnectionService` to `GameWorldService`.
 
@@ -345,11 +349,12 @@ Fields:
 
 - `fd`: connection fd to route the response.
 - `playerId`: known player id for existing sessions.
+- `roomId`: logical room id used by matched / joined games.
 - `line`: raw protocol command for `Command`.
 
 ### `GameResponseType` and `GameResponse`
 
-Defined in `server/worker_server.h`.
+Defined in `server/worker_protocol.h`.
 
 Response sent from `GameWorldService` back to `ConnectionService`.
 
@@ -362,20 +367,73 @@ Types:
 `closeAfterSend` tells `ConnectionService` to close the fd after the response is
 written.
 
-### `RoomMessage` and `DbMessage`
+### `RoomMessage`
 
-Defined in `server/worker_server.h`.
+Defined in `server/worker_protocol.h`.
 
-Placeholder messages for future room/map sharding and persistence work.
+Used for room-side side effects emitted by `GameWorldService`.
 
 Current use:
 
-- Room messages are emitted on player join/leave.
-- Db messages are emitted when player data should be saved.
+- `PlayerJoined`
+- `PlayerLeft`
+
+### `HallMessage`
+
+Defined in `server/worker_protocol.h`.
+
+Carries room-listing and matchmaking operations.
+
+Types:
+
+- `ListRooms`
+- `CreateRoom`
+- `AutoMatch`
+- `CancelMatch`
+- `JoinRoom`
+- `LeaveRoom`
+- `Result`
+
+### `DbMessage`
+
+Defined in `server/worker_protocol.h`.
+
+Carries persistence and credential-check requests.
+
+Types:
+
+- `SavePlayer`
+- `CheckCredentials`
+- `CredentialsResult`
+
+### `RedisMessage`
+
+Defined in `server/worker_protocol.h`.
+
+Carries the fake-Redis request/reply payload.
+
+Types:
+
+- `Get`
+- `Set`
+- `Delete`
+- `KeysByPrefix`
+- `Result`
+
+### `LoginMessage`
+
+Defined in `server/worker_protocol.h`.
+
+Carries login request and result payloads.
+
+Types:
+
+- `Request`
+- `Result`
 
 ### `MessageKind`
 
-Defined in `server/worker_server.h`.
+Defined in `server/worker_protocol.h`.
 
 Discriminator for the payload stored in `SkynetMessage`.
 
@@ -384,13 +442,16 @@ Values:
 - `Socket`
 - `GameCommand`
 - `GameResponse`
+- `Login`
 - `Log`
 - `Room`
 - `Db`
+- `Hall`
+- `Redis`
 
 ### `SkynetMessage`
 
-Defined in `server/worker_server.h`.
+Defined in `server/worker_protocol.h`.
 
 Generic service message envelope.
 
@@ -398,15 +459,18 @@ Fields:
 
 - `source`: sender service id.
 - `destination`: target service id.
-- `session`: reserved for request/response style correlation.
+- `session`: reserved field.
+- `requestId`: id assigned to an outbound service call.
+- `replyTo`: request id that this message replies to.
 - `kind`: active payload kind.
-- `socket`, `gameCommand`, `gameResponse`, `room`, `db`, `text`: payload slots.
+- `socket`, `gameCommand`, `gameResponse`, `login`, `room`, `db`, `hall`,
+  `redis`, `text`: payload slots.
 
 This mirrors Skynet's idea of wrapping all events as service messages.
 
-### `ServiceQueue`
+### `ServiceContext`
 
-Defined in `server/worker_server.h/.cpp`.
+Defined in `server/service_context.h/.cpp`.
 
 Per-service mailbox.
 
@@ -425,9 +489,46 @@ Important methods:
 - `finishBatch()`: clears scheduled state if empty, otherwise asks for
   rescheduling.
 
+This queue object is the stable base of the current "queue + coroutine"
+dispatcher.
+
+### `CoroutineServiceContext`
+
+Defined in `server/service_runtime_contexts.h/.cpp`.
+
+Base class for services that process mailbox messages in a long-lived
+coroutine.
+
+Responsibilities:
+
+- Starts `mainLoop()` lazily on first dispatch.
+- Buffers inbound messages in `inbox_`.
+- Resumes the service coroutine until it blocks on `nextMessage()`.
+
+Current users:
+
+- `LoggerServiceContext`
+- `RoomServiceContext`
+- `DbServiceContext`
+- `RedisServiceContext`
+
+### `RequestReplyServiceContext`
+
+Defined in `server/request_reply_service_context.h/.cpp`.
+
+Base class for services that need mailbox processing plus nested
+service-to-service request/reply.
+
+Responsibilities:
+
+- Supports `nextMessage()` mailbox suspension.
+- Supports `callService(request)` suspension.
+- Tracks pending calls by `requestId`.
+- Resumes the suspended coroutine when a reply arrives with matching `replyTo`.
+
 ### `SocketCommandType` and `SocketCommand`
 
-Defined in `server/worker_server.h`.
+Defined in `server/worker_protocol.h`.
 
 Command sent from services back to the socket loop.
 
@@ -448,27 +549,41 @@ Responsibilities:
 
 - Owns the listening socket and all connection fds.
 - Runs the socket event loop.
-- Owns all service queues.
+- Owns all service contexts.
 - Owns the global queue of ready service queues.
 - Starts and stops worker threads.
+- Starts a fixed-step world tick thread.
 - Converts fd events into `SocketMessage`.
 - Converts service responses into `SocketCommand`.
 
 Important private structs:
 
 - `ClientSocket`: socket-loop state, including output buffer and close flag.
-- `ClientSession`: connection-service state, including player id and line
-  input buffer.
 
-Service handlers:
+Important methods:
 
 - `handleGateService`: forwards socket events to connection service.
-- `handleConnectionService`: parses lines, maps fd to player id, sends game
-  commands, and turns game responses into socket commands.
-- `handleGameWorldService`: calls `GameWorld`.
-- `handleRoomService`: placeholder for room/map service.
-- `handleDbService`: placeholder for persistence.
-- `handleLoggerService`: placeholder for async logs.
+- `handleConnectionService`: creates and routes `SessionServiceContext`
+  instances by fd.
+- `handleGameWorldService`: calls `GameWorld` and emits room/db/connection side
+  effects.
+- `sendToContext`: pushes a message into one service mailbox and schedules it.
+- `rescheduleService`: requeues a service when a worker batch drained only part
+  of the mailbox.
+- `drainSocketCommands`: flushes worker-generated `Send` and `Close` commands
+  back into socket-loop-owned fd state.
+
+Service inventory:
+
+- `LoggerServiceContext`
+- `GateServiceContext`
+- `ConnectionServiceContext`
+- `GameWorldServiceContext`
+- `RoomServiceContext`
+- `LoginServiceContext`
+- `DbServiceContext`
+- `HallServiceContext`
+- `RedisServiceContext`
 
 Data flow:
 
@@ -477,11 +592,116 @@ socketLoop
   -> queueSocketMessage(SocketMessage)
   -> Gate queue
   -> Connection queue
-  -> GameWorld queue
-  -> Connection queue
+  -> SessionServiceContext(fd)
+  -> Login/Hall/GameWorld/Db/Redis queues
+  -> SessionServiceContext(fd)
   -> queueSocketCommand(Send/Close)
   -> socketLoop flush
 ```
+
+### `SessionServiceContext`
+
+Defined in `server/session_service_context.h/.cpp`.
+
+Per-connection coroutine service wrapper around one `ISessionAgent`.
+
+Responsibilities:
+
+- Receives socket events for one fd.
+- Receives login/hall/world replies for that same fd.
+- Applies `SessionActions` returned by the session agent.
+- Converts one selected service message at a time into a blocking
+  `callService(...)`.
+- Retires and clears the session when the agent asks to erase it.
+
+The blocking service calls extracted by `processSessionActions()` are:
+
+- login request
+- hall request
+- world `Join`
+- world `Leave`
+- world `QUIT`
+
+### `GateServiceContext`
+
+Defined in `server/service_runtime_contexts.h/.cpp`.
+
+Thin queue endpoint that forwards socket events from the socket loop into
+`ConnectionService`.
+
+### `ConnectionServiceContext`
+
+Defined in `server/service_runtime_contexts.h/.cpp`.
+
+Thin queue endpoint that routes messages to per-fd `SessionServiceContext`
+instances.
+
+It handles:
+
+- accept -> create session context
+- data -> forward to session
+- close/error -> forward to session or close directly if no session exists
+- login/hall/game responses -> route reply back to owning session
+
+### `GameWorldServiceContext`
+
+Defined in `server/service_runtime_contexts.h/.cpp`.
+
+`RequestReplyServiceContext` wrapper around
+`WorkerGameServer::handleGameWorldService()`.
+
+### `LoggerServiceContext`
+
+Defined in `server/service_runtime_contexts.h/.cpp`.
+
+Coroutine mailbox service that prints `MessageKind::Log` payloads to stdout.
+
+### `LoginServiceContext`
+
+Defined in `server/service_runtime_contexts.h/.cpp`.
+
+Coroutine request/reply service for authentication.
+
+Flow:
+
+```text
+Login request
+  -> Db CheckCredentials
+  -> Db CredentialsResult
+  -> Login Result
+  -> Connection / Session
+```
+
+### `DbServiceContext`
+
+Defined in `server/service_runtime_contexts.h/.cpp`.
+
+Coroutine mailbox service that currently provides:
+
+- in-memory credential lookup seeded from `IGameServerBinding::seedUsers()`
+- `SavePlayer` logging hook
+
+### `HallServiceContext`
+
+Defined in `server/service_runtime_contexts.h/.cpp`.
+
+Coroutine request/reply service for room listing, room lifecycle, and
+auto-match.
+
+Responsibilities:
+
+- Owns `rooms_`
+- Owns auto-match queues keyed by `(gameType, seatCount)`
+- Allocates room ids
+- Writes hall state mirrors into `RedisServiceContext`
+- Replies directly to waiting sessions with `HallMessageType::Result`
+
+### `RedisServiceContext`
+
+Defined in `server/service_runtime_contexts.h/.cpp`.
+
+Coroutine mailbox service implementing an in-process key/value store with a
+Redis-like request shape.
 
 ## Socket Utilities
 
@@ -698,6 +918,46 @@ Starts the graphical ImGui/OpenGL client.
 
 Starts the pressure-test client.
 
+## Build / Test Notes
+
+Current build targets relevant to the worker architecture include:
+
+- `supermario_server_workers`
+- `guess_number_server_workers`
+- `guess_number_client`
+- `game2048_client`
+- `stress_client`
+
+Typical local build commands:
+
+```bash
+cmake -S . -B build -DBUILD_IMGUI_CLIENT=ON
+cmake --build build --target guess_number_server_workers
+cmake --build build --target guess_number_client
+```
+
+Typical startup smoke test for guess-number:
+
+```bash
+./build/guess_number_server_workers 127.0.0.1 7799 1
+```
+
+The current repository state does not expose automated `ctest` coverage for
+this path:
+
+```bash
+ctest --test-dir build -N
+```
+
+Expected result:
+
+```text
+Total Tests: 0
+```
+
+So "test" currently means build verification plus manual startup / connection
+smoke testing.
+
 ## Protocol Summary
 
 Client-to-server commands:
@@ -756,8 +1016,11 @@ Adding a new worker service:
 
 ```text
 1. Add a ServiceId value.
-2. Add a ServiceQueue instance in WorkerGameServer.
-3. Add a MessageKind or payload type if needed.
-4. Route messages in dispatchMessage.
-5. Implement handleNewService.
+2. Add a payload/message type in worker_protocol if needed.
+3. Choose a base:
+   - ServiceContext
+   - CoroutineServiceContext
+   - RequestReplyServiceContext
+4. Register the service context in WorkerGameServer.
+5. Route callers to that service with sendToService / callService.
 ```

@@ -21,6 +21,9 @@ public:
     SessionActions onWorldResponse(const GameResponse& response) noexcept override;
     SessionActions onLoginResponse(const LoginMessage& response) noexcept override;
     SessionActions onHallResponse(const HallMessage& response) noexcept override;
+    
+    // 用户恢复（重连时调用）
+    SessionActions onReconnect(int newFd);
 
 private:
     static std::string trimLine(std::string line);

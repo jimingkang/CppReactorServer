@@ -31,6 +31,8 @@ struct PlayerInfo {
     int score = 0;
     int gamesPlayed = 0;
     int gamesWon = 0;
+    bool disconnected = false;
+    std::chrono::steady_clock::time_point lastSeen;
 };
 
 class GuessNumberRoomManager {
@@ -68,6 +70,11 @@ public:
     
     // Cleanup
     void removeExpiredRooms(int timeoutSeconds);
+    
+    // Reconnection support
+    PlayerInfo* findDisconnectedPlayer(int playerId);
+    void markPlayerDisconnected(int playerId);
+    void reconnectPlayer(int playerId, int newFd);
     
 private:
     std::unordered_map<int, RoomInfo> rooms_;
