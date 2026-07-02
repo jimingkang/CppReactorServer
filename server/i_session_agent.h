@@ -27,4 +27,8 @@ public:
     virtual SessionActions onWorldResponse(const GameResponse& response) noexcept = 0;
     virtual SessionActions onLoginResponse(const LoginMessage& response) noexcept = 0;
     virtual SessionActions onHallResponse(const HallMessage& response) noexcept = 0;
+    virtual SessionActions onWowRuntimeResponse(const WowRuntimeMessage& response) noexcept {
+        (void)response;
+        return {};
+    }
 };

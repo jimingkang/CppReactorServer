@@ -53,6 +53,16 @@ bool SessionServiceContext::isWorldCallMessage(const SkynetMessage& message) {
     return command.type == GameCommandType::Command && command.line == "QUIT";
 }
 
+bool SessionServiceContext::isWowRuntimeCallMessage(const SkynetMessage& message) {
+    if (message.kind != MessageKind::WowRuntime) {
+        return false;
+    }
+
+    return message.destination == ServiceId::WowCharacter ||
+           message.destination == ServiceId::WowMapInstance ||
+           message.destination == ServiceId::WowCombat;
+}
+
 SessionActions SessionServiceContext::withoutSessionCall(SessionActions actions, std::optional<SkynetMessage>& callMessage, SessionCallKind& callKind) {
     std::vector<SkynetMessage> passthrough;
     passthrough.reserve(actions.serviceMessages.size());
@@ -69,6 +79,11 @@ SessionActions SessionServiceContext::withoutSessionCall(SessionActions actions,
         }
         if (!callMessage.has_value() && isWorldCallMessage(serviceMessage)) {
             callKind = SessionCallKind::World;
+            callMessage = std::move(serviceMessage);
+            continue;
+        }
+        if (!callMessage.has_value() && isWowRuntimeCallMessage(serviceMessage)) {
+            callKind = SessionCallKind::WowRuntime;
             callMessage = std::move(serviceMessage);
             continue;
         }
@@ -117,6 +132,12 @@ auto SessionServiceContext::mainLoop() -> Task {
             co_await processSessionActions(std::move(actions));
             continue;
         }
+
+        if (message.kind == MessageKind::WowRuntime) {
+            actions = agent_->onWowRuntimeResponse(message.wowRuntime);
+            co_await processSessionActions(std::move(actions));
+            continue;
+        }
     }
 }
 
@@ -140,6 +161,9 @@ auto SessionServiceContext::processSessionActions(SessionActions actions) -> Tas
             break;
         case SessionCallKind::World:
             actions = agent_->onWorldResponse(response.gameResponse);
+            break;
+        case SessionCallKind::WowRuntime:
+            actions = agent_->onWowRuntimeResponse(response.wowRuntime);
             break;
         case SessionCallKind::None:
             co_return;

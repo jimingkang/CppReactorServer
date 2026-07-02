@@ -14,6 +14,9 @@ enum class ServiceId : std::uint32_t {
     Db = 7,
     Hall = 8,
     Redis = 9,
+    WowCharacter = 10,
+    WowMapInstance = 11,
+    WowCombat = 12,
 };
 
 enum class SocketMessageType {
@@ -126,6 +129,89 @@ struct RedisMessage {
     std::vector<std::string> values;
 };
 
+enum class WowRuntimeOp {
+    CharacterEnumRequest,
+    CharacterEnumResult,
+    CharacterCreateRequest,
+    CharacterCreateResult,
+    CharacterDeleteRequest,
+    CharacterDeleteResult,
+    CharacterLoginBegin,
+    CharacterLoginResult,
+    CharacterWhoRequest,
+    CharacterWhoResult,
+    CharacterSpellbookRequest,
+    CharacterSpellbookResult,
+    CharacterQuestListRequest,
+    CharacterQuestListResult,
+    CharacterQuestAcceptRequest,
+    CharacterQuestAcceptResult,
+    CharacterQuestTurnInRequest,
+    CharacterQuestTurnInResult,
+    CharacterVendorListRequest,
+    CharacterVendorListResult,
+    CharacterGossipRequest,
+    CharacterGossipResult,
+    CharacterGossipSelectRequest,
+    CharacterGossipSelectResult,
+    CharacterEquipRequest,
+    CharacterEquipResult,
+    CharacterUnequipRequest,
+    CharacterUnequipResult,
+    CharacterTrainRequest,
+    CharacterTrainResult,
+    CharacterBuyRequest,
+    CharacterBuyResult,
+    MapEnterRequest,
+    MapEnterResult,
+    MapLeaveRequest,
+    MapLeaveResult,
+    MapSnapshotRequest,
+    MapSnapshotResult,
+    MapMoveRequest,
+    MapMoveResult,
+    MapTeleportRequest,
+    MapTeleportResult,
+    MapSayRequest,
+    MapSayResult,
+    MapQueryUnitRequest,
+    MapQueryUnitResult,
+    MapDamageUnitRequest,
+    MapDamageUnitResult,
+    MapLootUnitRequest,
+    MapLootUnitResult,
+    CombatInitActor,
+    CombatTargetRequest,
+    CombatTargetResult,
+    CombatAttackRequest,
+    CombatAttackResult,
+    CombatCastRequest,
+    CombatCastResult,
+    CombatLootRequest,
+    CombatLootResult,
+    CombatReleaseRequest,
+    CombatReleaseResult,
+    CombatResurrectRequest,
+    CombatResurrectResult,
+    Tick,
+};
+
+struct WowRuntimeMessage {
+    WowRuntimeOp op = WowRuntimeOp::CharacterEnumRequest;
+    int fd = -1;
+    int playerId = 0;
+    int mapId = 0;
+    int instanceId = 0;
+    int targetId = 0;
+    int value0 = 0;
+    int value1 = 0;
+    bool success = false;
+    std::string accountName;
+    std::string characterName;
+    std::string payload;
+    std::string reason;
+};
+
 enum class LoginMessageType {
     Request,
     Result,
@@ -161,6 +247,7 @@ enum class MessageKind {
     Db,
     Hall,
     Redis,
+    WowRuntime,
 };
 
 struct SkynetMessage {
@@ -178,5 +265,6 @@ struct SkynetMessage {
     DbMessage db;
     HallMessage hall;
     RedisMessage redis;
+    WowRuntimeMessage wowRuntime;
     std::string text;
 };

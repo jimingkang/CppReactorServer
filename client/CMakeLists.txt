@@ -53,9 +53,28 @@ if (BUILD_IMGUI_CLIENT)
     target_compile_features(guess_number_client PRIVATE cxx_std_20)
     set_target_properties(guess_number_client PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
 
+    add_executable(wow_client
+            WOW/wow_client.cpp
+            WOW/wow_game.cpp
+            WOW/ui_theme.cpp
+            WOW/realm_screen.cpp
+            WOW/character_screen.cpp
+            WOW/game_screen.cpp
+            WOW/world_session.cpp
+            WOW/chat_frame.cpp
+            WOW/inventory_window.cpp
+            WOW/target_frame.cpp
+            WOW/unit_frame.cpp
+            WOW/action_bar.cpp
+    )
+    target_link_libraries(wow_client PRIVATE imgui glfw OpenGL::GL)
+    target_compile_features(wow_client PRIVATE cxx_std_20)
+    set_target_properties(wow_client PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
+
     if (APPLE)
         target_compile_definitions(super_mario_client PRIVATE GL_SILENCE_DEPRECATION)
         target_compile_definitions(game2048_client PRIVATE GL_SILENCE_DEPRECATION)
         target_compile_definitions(guess_number_client PRIVATE GL_SILENCE_DEPRECATION)
+        target_compile_definitions(wow_client PRIVATE GL_SILENCE_DEPRECATION)
     endif ()
 endif ()

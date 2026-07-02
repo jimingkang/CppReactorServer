@@ -60,7 +60,7 @@ WorkerGameServer::WorkerGameServer(std::string host, int port, std::size_t worke
         throw std::invalid_argument("WorkerGameServer binding returned null world");
     }
 
-    services_.reserve(9);
+    services_.reserve(12);
     services_.push_back(std::make_unique<LoggerServiceContext>());
     services_.push_back(std::make_unique<GateServiceContext>());
     services_.push_back(std::make_unique<ConnectionServiceContext>());
@@ -70,6 +70,9 @@ WorkerGameServer::WorkerGameServer(std::string host, int port, std::size_t worke
     services_.push_back(std::make_unique<DbServiceContext>(binding_->seedUsers()));
     services_.push_back(std::make_unique<HallServiceContext>());
     services_.push_back(std::make_unique<RedisServiceContext>());
+    for (auto& extra : binding_->createExtraServices()) {
+        services_.push_back(std::move(extra));
+    }
 }
 
 WorkerGameServer::~WorkerGameServer() {
@@ -117,6 +120,9 @@ void WorkerGameServer::run() {
             const auto start = std::chrono::steady_clock::now();
             try {
                 world_->tick(static_cast<int>(interval.count()));
+                for (auto tickMessage : binding_->createTickMessages(static_cast<int>(interval.count()))) {
+                    sendToService(tickMessage.destination, std::move(tickMessage));
+                }
             } catch (const std::exception& ex) {
                 std::cerr << "world.tick error: " << ex.what() << '\n';
             }
@@ -395,6 +401,16 @@ void WorkerGameServer::handleConnectionService(const SkynetMessage& message) {
 
     if (message.kind == MessageKind::Hall) {
         const HallMessage& response = message.hall;
+        auto* ctx = sessionContext(response.fd);
+        if (ctx == nullptr) {
+            return;
+        }
+        sendToContext(*ctx, message);
+        return;
+    }
+
+    if (message.kind == MessageKind::WowRuntime) {
+        const WowRuntimeMessage& response = message.wowRuntime;
         auto* ctx = sessionContext(response.fd);
         if (ctx == nullptr) {
             return;

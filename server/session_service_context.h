@@ -22,6 +22,7 @@ private:
         Login,
         Hall,
         World,
+        WowRuntime,
     };
 
     Task mainLoop() override;
@@ -33,6 +34,7 @@ private:
     static bool isLoginCallMessage(const SkynetMessage& message);
     static bool isHallCallMessage(const SkynetMessage& message);
     static bool isWorldCallMessage(const SkynetMessage& message);
+    static bool isWowRuntimeCallMessage(const SkynetMessage& message);
     static SessionActions withoutSessionCall(SessionActions actions, std::optional<SkynetMessage>& callMessage, SessionCallKind& callKind);
 
     std::unique_ptr<ISessionAgent> agent_;

@@ -1,0 +1,50 @@
+{
+    "window": {
+        "title": "MonsterWar",
+        "width": 1600,
+        "height": 1216,
+        "window_scale": 0.75,
+        "logical_scale": 1.0,
+        "resizable": true
+    },
+    "graphics": {
+        "vsync": true
+    },
+    "performance": {
+        "target_fps": 60
+    },
+    "audio": {
+        "music_volume": 0.2,
+        "sound_volume": 0.5
+    },
+    "input_mappings": {
+        "pause": [
+            "P",
+            "Escape"
+        ],
+        "move_down": [
+            "S",
+            "Down"
+        ],
+        "jump": [
+            "J",
+            "Space"
+        ],
+        "move_up": [
+            "W",
+            "Up"
+        ],
+        "move_right": [
+            "D",
+            "Right"
+        ],
+        "attack": [
+            "K",
+            "MouseLeft"
+        ],
+        "move_left": [
+            "A",
+            "Left"
+        ]
+    }
+}
